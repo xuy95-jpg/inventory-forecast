@@ -100,13 +100,18 @@ export default function DashboardPage() {
           icon={<TrendingUp size={20} />}
           color="purple"
         />
-        <StatsCard
-          title="风险库存"
-          value={riskItems.length}
-          subtitle={`${riskStockCount} 块库存有风险`}
-          icon={<AlertTriangle size={20} />}
-          color={riskItems.length > 0 ? 'red' : 'green'}
-        />
+        <div
+          onClick={() => document.getElementById('risk-detail')?.scrollIntoView({ behavior: 'smooth' })}
+          className="cursor-pointer"
+        >
+          <StatsCard
+            title="风险库存"
+            value={riskItems.length}
+            subtitle={`${riskStockCount} 块库存有风险`}
+            icon={<AlertTriangle size={20} />}
+            color={riskItems.length > 0 ? 'red' : 'green'}
+          />
+        </div>
       </div>
 
       {/* Charts + Ranking */}
@@ -120,7 +125,9 @@ export default function DashboardPage() {
       </div>
 
       {/* Risk Alerts */}
-      <RiskAlert riskItems={riskItems} />
+      <div id="risk-detail">
+        <RiskAlert riskItems={riskItems} />
+      </div>
     </div>
   );
 }
