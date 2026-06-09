@@ -11,18 +11,8 @@ import { addDays, isWeekend, isHoliday } from './helpers';
 /**
  * AI 预测引擎 (V2)
  *
- * 预测逻辑与武林路当日表格对齐：
- *   1. 同级对比：上周同星期销量 + 两周前同星期销量
- *   2. 近期趋势：近3日均值
- *   3. 历史参考：近4周同星期均值
- *   4. 周末/节假日加权
- *
- * OMAKASE 产品：
- *   OM咸芝士    ← 咸芝士 切角 1/3 (=完整巴斯克 1/6 × 1/3 = 1/18)
- *   OM香爆了    ← 香爆了 切角 1/3
- *   OM黑巧      ← 苦巧碎银子 切角 1/3
- *   OM牛肝菌    ← 牛肝菌 切角 1/3
- *   OMAKASE(份) = 4个OM品各1个的集合
+ * 核心思路：用数据库中最近的真实销量 + 同星期历史规律
+ * 不会因为目标日期和最新数据之间有gap而失败
  *
  * 切角 = 完整巴斯克的 1/6
  * OM = 切角的 1/3
@@ -31,8 +21,6 @@ import { addDays, isWeekend, isHoliday } from './helpers';
 // ============================================================
 // SKU 关系映射
 // ============================================================
-
-/** OM切角子品 → 母品（整只巴斯克）映射 */
 const OM_TO_PARENT: Record<string, string> = {
   'OM咸芝士': '咸芝士',
   'OM香爆了': '香爆了',
@@ -40,45 +28,40 @@ const OM_TO_PARENT: Record<string, string> = {
   'OM牛肝菌': '牛肝菌',
 };
 
-/** OM切角占比：完整巴斯克 → 切角(1/6) → OM(1/3切角) → OM = 1/18 整只 */
 const OM_RATIO = 1 / 18;
 
 // ============================================================
 // 核心函数
 // ============================================================
 
-/** 获取某个日期、门店、SKU的销量 */
-function getSalesForDate(
-  date: string,
+/** 找某个SKU门店最近N天有销量的日期和销量 */
+function getMostRecentSales(
   storeId: string,
   skuId: string,
-  salesData: SalesRecord[]
-): number {
-  const record = salesData.find(
-    r => r.date === date && r.storeId === storeId && r.skuId === skuId
-  );
-  return record?.salesQuantity ?? 0;
+  salesData: SalesRecord[],
+  count: number
+): { date: string; qty: number }[] {
+  const records = salesData
+    .filter(r => r.storeId === storeId && r.skuId === skuId && r.salesQuantity > 0)
+    .sort((a, b) => b.date.localeCompare(a.date)); // newest first
+
+  return records.slice(0, count).map(r => ({ date: r.date, qty: r.salesQuantity }));
 }
 
-/** 获取过去N天平均销量（只算有数据的日期） */
-function getAvgSales(
-  startDate: string,
-  endDate: string,
+/** 找最近一天的销量 */
+function getLatestSales(storeId: string, skuId: string, salesData: SalesRecord[]): number {
+  const recent = getMostRecentSales(storeId, skuId, salesData, 1);
+  return recent.length > 0 ? recent[0].qty : 0;
+}
+
+/** 获取最近N天有销量的日期 */
+function getLatestDateWithData(
   storeId: string,
   skuId: string,
   salesData: SalesRecord[]
-): number {
-  const records = salesData.filter(
-    r =>
-      r.date >= startDate &&
-      r.date <= endDate &&
-      r.storeId === storeId &&
-      r.skuId === skuId
-  );
-
-  if (records.length === 0) return 0;
-  const total = records.reduce((sum, r) => sum + r.salesQuantity, 0);
-  return total / records.length;
+): string | null {
+  const recent = getMostRecentSales(storeId, skuId, salesData, 1);
+  return recent.length > 0 ? recent[0].date : null;
 }
 
 /** 获取同星期几的近N周均值 */
@@ -95,9 +78,11 @@ function getSameWeekdayAvg(
 
   for (let w = 1; w <= weeks; w++) {
     const date = addDays(targetDate, -7 * w);
-    // 确保是同星期
     if (new Date(date).getDay() !== targetDay) continue;
-    const sales = getSalesForDate(date, storeId, skuId, salesData);
+    const record = salesData.find(
+      r => r.date === date && r.storeId === storeId && r.skuId === skuId
+    );
+    const sales = record?.salesQuantity ?? 0;
     if (sales > 0) {
       total += sales;
       count++;
@@ -133,62 +118,53 @@ export function predictSales(
 ): PredictionResult {
   const sku = skus.find(s => s.id === skuId);
 
-  // ---- OMAKASE 子品：从母品折算 ----
+  // OMAKASE
   if (sku?.category === 'OMAKASE') {
     return predictOmChild(targetDate, storeId, skuId, salesData, inventoryBatches, holidays, skus);
   }
 
   // ========================================
-  // 普通产品预测
+  // 普通产品：找最近3天真实数据
   // ========================================
-
-  const yesterday = addDays(targetDate, -1);
-  const dayBefore = addDays(targetDate, -2);
-  const twoDaysBefore = addDays(targetDate, -3);
-
-  // 近期数据
-  const yesterdaySales = getSalesForDate(yesterday, storeId, skuId, salesData);
-  const dayBeforeSales = getSalesForDate(dayBefore, storeId, skuId, salesData);
-  const twoDaysBeforeSales = getSalesForDate(twoDaysBefore, storeId, skuId, salesData);
-
-  // 近3日均值
-  const recent3Count = [yesterdaySales, dayBeforeSales, twoDaysBeforeSales].filter(v => v > 0).length;
-  const recent3Avg = recent3Count > 0
-    ? (yesterdaySales + dayBeforeSales + twoDaysBeforeSales) / Math.max(1, recent3Count)
+  const recent3 = getMostRecentSales(storeId, skuId, salesData, 3);
+  const recent3Qty = recent3.map(r => r.qty);
+  const recent3Avg = recent3.length > 0
+    ? recent3Qty.reduce((a, b) => a + b, 0) / recent3.length
     : 0;
 
-  // 近7日均值
-  const last7DaysAvg = getAvgSales(addDays(targetDate, -7), yesterday, storeId, skuId, salesData);
+  // 最近一天
+  const latestSales = recent3.length > 0 ? recent3[0].qty : 0;
+  const latestDate = recent3.length > 0 ? recent3[0].date : null;
 
-  // 同星期对比
-  const sameDayLastWeek = getSalesForDate(addDays(targetDate, -7), storeId, skuId, salesData);
+  // 同星期对比（从目标日期倒推）
+  const sameDayLastWeek = (() => {
+    const d = addDays(targetDate, -7);
+    const r = salesData.find(rec => rec.date === d && rec.storeId === storeId && rec.skuId === skuId);
+    return r?.salesQuantity ?? 0;
+  })();
+
   const sameDay4WeekAvg = getSameWeekdayAvg(targetDate, storeId, skuId, 4, salesData);
 
-  // ========================================
-  // 加权计算
-  // weight distribution aligns with table logic:
-  //   最近数据权重最高，同星期对比作为基底
-  // ========================================
+  // ---- 加权计算 ----
   let basePrediction: number;
 
   if (sameDay4WeekAvg > 0 && sameDayLastWeek > 0) {
-    // 有充足历史数据：加权平均
     basePrediction =
-      yesterdaySales * 0.30 +
+      latestSales * 0.30 +
       recent3Avg * 0.25 +
       sameDayLastWeek * 0.25 +
       sameDay4WeekAvg * 0.20;
   } else if (sameDayLastWeek > 0) {
-    // 只有上周数据
     basePrediction =
-      yesterdaySales * 0.35 +
+      latestSales * 0.35 +
       recent3Avg * 0.30 +
       sameDayLastWeek * 0.35;
+  } else if (recent3Avg > 0) {
+    basePrediction =
+      latestSales * 0.5 +
+      recent3Avg * 0.5;
   } else {
-    // 新SKU：依赖近期均值
-    basePrediction = recent3Avg > 0
-      ? recent3Avg * 0.6 + yesterdaySales * 0.4
-      : yesterdaySales;
+    basePrediction = 0;
   }
 
   // ---- 周末/节假日调整 ----
@@ -199,11 +175,11 @@ export function predictSales(
   if (weekend) multiplier += 0.20;
   if (holiday) multiplier += 0.30;
 
-  // ---- 如果最近数据有明显上升/下降趋势，微调 ----
-  if (yesterdaySales > 0 && dayBeforeSales > 0) {
-    const trendRatio = yesterdaySales / Math.max(1, dayBeforeSales);
-    if (trendRatio > 1.3) multiplier += 0.05;   // 上升趋势
-    if (trendRatio < 0.7) multiplier -= 0.05;    // 下降趋势
+  // ---- 趋势微调 ----
+  if (recent3.length >= 2) {
+    const trendRatio = recent3[0].qty / Math.max(1, recent3[1].qty);
+    if (trendRatio > 1.3) multiplier += 0.05;
+    if (trendRatio < 0.7) multiplier -= 0.05;
   }
 
   multiplier = Math.max(0.85, Math.min(1.5, multiplier));
@@ -237,10 +213,11 @@ export function predictSales(
     riskLevel,
     confidence,
     factors: [
-      { name: '昨日销量', value: yesterdaySales, weight: 0.30 },
+      { name: '最近销量', value: latestSales, weight: 0.30 },
       { name: '近3日均值', value: Math.round(recent3Avg), weight: 0.25 },
       { name: '上周同星期', value: sameDayLastWeek, weight: 0.25 },
       { name: '近4周同星期均值', value: Math.round(sameDay4WeekAvg), weight: 0.20 },
+      { name: '最新数据日期', value: latestDate ? 1 : 0, weight: 0 },
       { name: weekend ? '周末加成' : '非周末', value: weekend ? 0.20 : 0, weight: 0 },
       { name: holiday ? '节假日加成' : '非节日', value: holiday ? 0.30 : 0, weight: 0 },
     ],
@@ -249,8 +226,6 @@ export function predictSales(
 
 // ============================================================
 // OMAKASE 切角单品预测
-// 4个OM单品 = 4款巴斯克切角的1/3
-// 没有独立的"OMAKASE"SKU，OMAKASE是拼盘概念
 // ============================================================
 
 function predictOmChild(
@@ -264,46 +239,26 @@ function predictOmChild(
 ): PredictionResult {
   const omSku = skus.find(s => s.id === omSkuId);
   if (!omSku) {
-    return {
-      skuId: omSkuId, storeId, date: targetDate,
-      predictedSales: 0, availableStock: 0, suggestedProduction: 0,
-      riskLevel: 'low', confidence: 0, factors: [],
-    };
+    return { skuId: omSkuId, storeId, date: targetDate, predictedSales: 0, availableStock: 0, suggestedProduction: 0, riskLevel: 'low', confidence: 0, factors: [] };
   }
 
   const parentName = OM_TO_PARENT[omSku.name];
   if (!parentName) {
-    return {
-      skuId: omSkuId, storeId, date: targetDate,
-      predictedSales: 0, availableStock: 0, suggestedProduction: 0,
-      riskLevel: 'low', confidence: 0, factors: [],
-    };
+    return { skuId: omSkuId, storeId, date: targetDate, predictedSales: 0, availableStock: 0, suggestedProduction: 0, riskLevel: 'low', confidence: 0, factors: [] };
   }
 
   const parentSku = skus.find(s => s.name === parentName);
   if (!parentSku) {
-    return {
-      skuId: omSkuId, storeId, date: targetDate,
-      predictedSales: 0, availableStock: 0, suggestedProduction: 0,
-      riskLevel: 'low', confidence: 0, factors: [],
-    };
+    return { skuId: omSkuId, storeId, date: targetDate, predictedSales: 0, availableStock: 0, suggestedProduction: 0, riskLevel: 'low', confidence: 0, factors: [] };
   }
 
-  // 预测母品销量 × OM折算比例 = 母品 × 1/18
-  const parentPrediction = predictSales(
-    targetDate, storeId, parentSku.id,
-    salesData, inventoryBatches, holidays, skus
-  );
-
+  const parentPrediction = predictSales(targetDate, storeId, parentSku.id, salesData, inventoryBatches, holidays, skus);
   const omPredicted = Math.ceil(parentPrediction.predictedSales * OM_RATIO);
   const availableStock = getAvailableStock(storeId, omSkuId, inventoryBatches);
 
   return {
-    skuId: omSkuId,
-    storeId,
-    date: targetDate,
-    predictedSales: omPredicted,
-    availableStock,
+    skuId: omSkuId, storeId, date: targetDate,
+    predictedSales: omPredicted, availableStock,
     suggestedProduction: Math.max(0, omPredicted - availableStock),
     riskLevel: availableStock < omPredicted * 0.3 ? 'high' : 'low',
     confidence: parentPrediction.confidence * 0.8,
@@ -329,9 +284,7 @@ export function predictAll(
   const results: PredictionResult[] = [];
   for (const store of stores) {
     for (const sku of skus) {
-      results.push(
-        predictSales(targetDate, store.id, sku.id, salesData, inventoryBatches, holidays, skus)
-      );
+      results.push(predictSales(targetDate, store.id, sku.id, salesData, inventoryBatches, holidays, skus));
     }
   }
   return results;
