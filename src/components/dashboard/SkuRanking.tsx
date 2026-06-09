@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { SalesRecord, Sku, Store } from '@/types';
 import { todayStr } from '@/lib/helpers';
 
@@ -10,10 +11,16 @@ interface Props {
 }
 
 export default function SkuRanking({ salesRecords, skus, stores }: Props) {
-  const today = todayStr();
-  const todayRecords = salesRecords.filter(r => r.date === today);
+  // Use latest date with actual data, not today
+  const latestDate = useMemo(() => {
+    if (salesRecords.length === 0) return todayStr();
+    const dates = [...new Set(salesRecords.filter(r => r.salesQuantity > 0).map(r => r.date))].sort();
+    return dates.length > 0 ? dates[dates.length - 1] : todayStr();
+  }, [salesRecords]);
 
-  // 按SKU聚合今日销量
+  const todayRecords = salesRecords.filter(r => r.date === latestDate);
+
+  // Rank by SKU
   const skuRanking = skus
     .map(sku => {
       const total = todayRecords
@@ -25,7 +32,7 @@ export default function SkuRanking({ salesRecords, skus, stores }: Props) {
 
   const maxSales = skuRanking[0]?.total || 1;
 
-  // 按门店聚合今日销量
+  // Rank by store
   const storeRanking = stores
     .map(store => {
       const total = todayRecords
@@ -37,7 +44,10 @@ export default function SkuRanking({ salesRecords, skus, stores }: Props) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <h3 className="text-sm font-semibold text-gray-800 mb-4">🏆 SKU销量排行（今日）</h3>
+      <h3 className="text-sm font-semibold text-gray-800 mb-4">
+        🏆 SKU销量排行
+        <span className="text-xs font-normal text-gray-400 ml-2">（{latestDate}）</span>
+      </h3>
       <div className="space-y-3">
         {skuRanking.map(({ sku, total }, idx) => (
           <div key={sku.id} className="flex items-center gap-3">
@@ -51,7 +61,7 @@ export default function SkuRanking({ salesRecords, skus, stores }: Props) {
               <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-blue-500 rounded-full transition-all"
-                  style={{ width: `${(total / maxSales) * 100}%` }}
+                  style={{ width: `${maxSales > 0 ? (total / maxSales) * 100 : 0}%` }}
                 />
               </div>
             </div>

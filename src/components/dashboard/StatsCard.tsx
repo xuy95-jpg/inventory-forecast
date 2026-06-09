@@ -10,6 +10,7 @@ interface StatsCardProps {
   trend?: 'up' | 'down' | 'neutral';
   trendValue?: string;
   color?: 'blue' | 'green' | 'amber' | 'red' | 'purple';
+  onClick?: () => void;
 }
 
 const colorMap = {
@@ -36,9 +37,13 @@ export default function StatsCard({
   trend,
   trendValue,
   color = 'blue',
+  onClick,
 }: StatsCardProps) {
   return (
-    <div className={`rounded-xl border p-4 ${colorMap[color]} transition-shadow hover:shadow-sm`}>
+    <div
+      className={`rounded-xl border p-4 ${colorMap[color]} ${onClick ? 'cursor-pointer hover:shadow-md active:scale-[0.98]' : 'transition-shadow hover:shadow-sm'}`}
+      onClick={onClick}
+    >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-medium opacity-70">{title}</p>

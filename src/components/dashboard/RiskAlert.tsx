@@ -25,7 +25,7 @@ export default function RiskAlert({ riskItems }: Props) {
   const yellowTotal = yellowItems.reduce((s, r) => s + r.remainingQuantity, 0);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5" id="risk-detail">
+    <div className="bg-white rounded-xl border border-gray-200 p-5">
       {/* Title */}
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-gray-800">

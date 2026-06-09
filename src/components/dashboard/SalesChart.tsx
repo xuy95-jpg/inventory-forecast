@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -11,7 +12,7 @@ import {
   Legend,
 } from 'recharts';
 import { SalesRecord, Sku } from '@/types';
-import { addDays, formatDisplayDate, todayStr } from '@/lib/helpers';
+import { addDays, todayStr } from '@/lib/helpers';
 
 interface Props {
   salesRecords: SalesRecord[];
@@ -19,12 +20,18 @@ interface Props {
 }
 
 export default function SalesChart({ salesRecords, skus }: Props) {
-  // 生成最近 14 天的每日总销量
-  const today = todayStr();
+  // Find the latest date that has actual sales data
+  const latestDataDate = useMemo(() => {
+    if (salesRecords.length === 0) return todayStr();
+    const dates = [...new Set(salesRecords.filter(r => r.salesQuantity > 0).map(r => r.date))].sort();
+    return dates.length > 0 ? dates[dates.length - 1] : todayStr();
+  }, [salesRecords]);
+
   const chartData: { date: string; label: string; [key: string]: string | number }[] = [];
 
+  // Generate 14 days from latestDataDate backwards
   for (let i = 13; i >= 0; i--) {
-    const date = addDays(today, -i);
+    const date = addDays(latestDataDate, -i);
     const dayRecords = salesRecords.filter(r => r.date === date);
     const total = dayRecords.reduce((sum, r) => sum + r.salesQuantity, 0);
 
@@ -34,7 +41,6 @@ export default function SalesChart({ salesRecords, skus }: Props) {
       总销量: total,
     };
 
-    // Top 3 SKUs trend
     const top3 = skus.slice(0, 3);
     for (const sku of top3) {
       const skuTotal = dayRecords
@@ -51,7 +57,12 @@ export default function SalesChart({ salesRecords, skus }: Props) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
-      <h3 className="text-sm font-semibold text-gray-800 mb-4">📈 近14天销量趋势</h3>
+      <h3 className="text-sm font-semibold text-gray-800 mb-4">
+        📈 近14天销量趋势
+        <span className="text-xs font-normal text-gray-400 ml-2">
+          （最新数据：{latestDataDate}）
+        </span>
+      </h3>
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData}>
@@ -76,6 +87,7 @@ export default function SalesChart({ salesRecords, skus }: Props) {
               stroke="#6366f1"
               strokeWidth={2}
               dot={false}
+              connectNulls
             />
             {top3.map((sku, i) => (
               <Line
@@ -86,6 +98,7 @@ export default function SalesChart({ salesRecords, skus }: Props) {
                 strokeWidth={1.5}
                 strokeDasharray="5 5"
                 dot={false}
+                connectNulls
               />
             ))}
           </LineChart>

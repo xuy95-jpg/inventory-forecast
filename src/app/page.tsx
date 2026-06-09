@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useData } from '@/context/DataContext';
 import { todayStr } from '@/lib/helpers';
 import { getAllStoresTotalStock, getRiskItems } from '@/lib/inventory';
@@ -23,15 +23,25 @@ export default function DashboardPage() {
     holidays,
   } = useData();
 
-  const today = todayStr();
-  const tomorrow = addDays(today, 1);
+  const riskRef = useRef<HTMLDivElement>(null);
 
-  // Today's stats
+  const today = todayStr();
+
+  // Find latest date with actual data
+  const latestDataDate = useMemo(() => {
+    if (salesRecords.length === 0) return today;
+    const dates = [...new Set(salesRecords.filter(r => r.salesQuantity > 0).map(r => r.date))].sort();
+    return dates.length > 0 ? dates[dates.length - 1] : today;
+  }, [salesRecords, today]);
+
+  const tomorrow = addDays(latestDataDate, 1);
+
+  // Latest day sales
   const todaySales = useMemo(() => {
     return salesRecords
-      .filter(r => r.date === today)
+      .filter(r => r.date === latestDataDate)
       .reduce((sum, r) => sum + r.salesQuantity, 0);
-  }, [salesRecords, today]);
+  }, [salesRecords, latestDataDate]);
 
   const totalStock = useMemo(() => {
     return getAllStoresTotalStock(inventoryBatches);
@@ -55,24 +65,15 @@ export default function DashboardPage() {
 
   const riskStockCount = riskItems.reduce((sum, r) => sum + r.remainingQuantity, 0);
 
-  // Yesterday for trend
-  const yesterday = addDays(today, -1);
-  const yesterdaySales = useMemo(() => {
-    return salesRecords
-      .filter(r => r.date === yesterday)
-      .reduce((sum, r) => sum + r.salesQuantity, 0);
-  }, [salesRecords, yesterday]);
-
-  const salesTrend = todaySales > yesterdaySales ? 'up' : todaySales < yesterdaySales ? 'down' : 'neutral';
-  const trendPct = yesterdaySales > 0
-    ? `${Math.abs(Math.round(((todaySales - yesterdaySales) / yesterdaySales) * 100))}%`
-    : '-';
+  const scrollToRisk = () => {
+    riskRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-gray-500 mt-1">门店备货总览 · {today}</p>
+        <p className="text-sm text-gray-500 mt-1">门店备货总览 · 最新数据: {latestDataDate}</p>
       </div>
 
       {/* Stats Cards */}
@@ -89,8 +90,6 @@ export default function DashboardPage() {
           value={todaySales}
           subtitle={today}
           icon={<ShoppingCart size={20} />}
-          trend={salesTrend}
-          trendValue={`较昨日 ${trendPct}`}
           color="green"
         />
         <StatsCard
@@ -100,18 +99,14 @@ export default function DashboardPage() {
           icon={<TrendingUp size={20} />}
           color="purple"
         />
-        <div
-          onClick={() => document.getElementById('risk-detail')?.scrollIntoView({ behavior: 'smooth' })}
-          className="cursor-pointer"
-        >
-          <StatsCard
-            title="风险库存"
-            value={riskItems.length}
-            subtitle={`${riskStockCount} 块库存有风险`}
-            icon={<AlertTriangle size={20} />}
-            color={riskItems.length > 0 ? 'red' : 'green'}
-          />
-        </div>
+        <StatsCard
+          title="风险库存"
+          value={riskItems.length}
+          subtitle={`${riskStockCount} 块库存有风险`}
+          icon={<AlertTriangle size={20} />}
+          color={riskItems.length > 0 ? 'red' : 'green'}
+          onClick={scrollToRisk}
+        />
       </div>
 
       {/* Charts + Ranking */}
@@ -125,7 +120,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Risk Alerts */}
-      <div id="risk-detail">
+      <div ref={riskRef}>
         <RiskAlert riskItems={riskItems} />
       </div>
     </div>
