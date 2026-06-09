@@ -1,7 +1,5 @@
 import { Sku } from "@/types";
 
-// 武林路当日 — 所有历史切角块数据，2026-05-31 ~ 2026-06-03
-
 export const mockSkus: Sku[] = [
   { id: "sku-001", name: "咸芝士", category: "6寸巴斯克", shelfLife: 5, unit: "个" },
   { id: "sku-002", name: "玫瑰", category: "6寸巴斯克", shelfLife: 5, unit: "个" },
