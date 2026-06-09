@@ -120,7 +120,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Risk Alerts */}
-      <div ref={riskRef}>
+      <div ref={riskRef} id="risk-section">
         <RiskAlert riskItems={riskItems} />
       </div>
     </div>
