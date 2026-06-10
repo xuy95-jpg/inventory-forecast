@@ -54,7 +54,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (initialized) return;
     init();
     async function init() {
-      const VER = 'v3'; // bump to force re-seed
+      const VER = 'v4'; // bump to force re-seed
       const localVer = typeof window !== 'undefined' ? localStorage.getItem('data_version') : null;
 
       try {
