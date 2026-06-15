@@ -68,14 +68,15 @@ function getSameWeekdayAvg(targetDate: string, storeId: string, skuId: string, w
   return count > 0 ? total / count : 0;
 }
 
-/** 获取SKU拆分库存：已切块数 + 整模个数 */
-function getSplitStock(storeId: string, skuId: string, batches: InventoryBatch[]): { cut: number; whole: number; total: number } {
+/** 获取SKU拆分库存：区分巴斯克(整模×6+切角) 和 罐罐(整罐×1)*/
+function getSplitStock(storeId: string, skuId: string, batches: InventoryBatch[], skuCategory: string): { cut: number; whole: number; total: number } {
   let cut = 0, whole = 0;
   for (const b of batches) {
     if (b.storeId !== storeId || b.skuId !== skuId || b.remainingQuantity <= 0) continue;
-    if (b.id.includes('-cut')) cut += b.remainingQuantity;
+    if (b.batchType === 'cut') cut += b.remainingQuantity;
     else whole += b.remainingQuantity;
   }
+  if (skuCategory === '罐罐') return { cut: 0, whole, total: whole };
   return { cut, whole, total: cut + whole * 6 };
 }
 
@@ -116,31 +117,32 @@ function predictSingleDay(targetDate: string, storeId: string, skuId: string, sa
 // ============================================================
 
 export function predictTwoDay(
-  productionDate: string,  // 明天（生产日）
+  productionDate: string,
   storeId: string,
   skuId: string,
   salesData: SalesRecord[],
   inventoryBatches: InventoryBatch[],
+  skuCategory?: string,
 ): TwoDayPrediction {
+  const cat = skuCategory || '6寸巴斯克';
+  const isCanned = cat === '罐罐';
   const tomorrow = productionDate;
   const dayAfter = addDays(tomorrow, 1);
 
-  // OM产品走母品折算
-  const omParent = OM_TO_PARENT[skuId] || OM_TO_PARENT[Object.keys(OM_TO_PARENT).find(k => k === skuId)?.replace('sku-','') || ''];
-
-  // 预测两日销量(块)
+  // 预测两日销量
   const tomorrowSales = predictSingleDay(tomorrow, storeId, skuId, salesData);
   const dayAfterSales = predictSingleDay(dayAfter, storeId, skuId, salesData);
   const totalDemand = tomorrowSales + dayAfterSales;
 
   // 当前库存
-  const stock = getSplitStock(storeId, skuId, inventoryBatches);
+  const stock = getSplitStock(storeId, skuId, inventoryBatches, cat);
 
   // 缺口
   const shortage = Math.max(0, totalDemand - stock.total);
 
-  // 建议制作
-  const suggestedUnits = Math.ceil(shortage / 6);
+  // 建议制作：罐罐1罐=1个，巴斯克6块=1个
+  const multiplier = isCanned ? 1 : 6;
+  const suggestedUnits = Math.ceil(shortage / multiplier);
   const suggestedBlocks = shortage;
 
   // 风险
@@ -169,7 +171,7 @@ export function predictOmakase(
     const parentName = OM_TO_PARENT[omName];
     const parentSku = skus.find(s => s.name === parentName);
     if (!parentSku) continue;
-    const pred = predictTwoDay(productionDate, storeId, parentSku.id, salesData, inventoryBatches);
+    const pred = predictTwoDay(productionDate, storeId, parentSku.id, salesData, inventoryBatches, parentSku.category);
     tomorrowSales += Math.ceil(pred.tomorrowSales * OM_RATIO);
     dayAfterSales += Math.ceil(pred.dayAfterSales * OM_RATIO);
     cutStock += pred.cutStock;

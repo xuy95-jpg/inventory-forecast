@@ -18,11 +18,11 @@ export default function PredictionPage() {
   // Predict all SKUs
   const predictions = useMemo(() => {
     return skus.map(sku => {
-      const pred = predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches);
+      const pred = predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches, sku.category);
       return { sku, pred };
     }).filter(p => {
       // Filter only products with stock or sales history
-      const hasStock = getSplitStock(inventoryBatches, storeId, p.sku.id).total > 0;
+      const hasStock = getSplitStock(inventoryBatches, storeId, p.sku.id, p.sku.category).total > 0;
       const hasSales = salesRecords.some(r => r.storeId === storeId && r.skuId === p.sku.id && r.salesQuantity > 0);
       return hasStock || hasSales;
     });

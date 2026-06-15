@@ -25,7 +25,8 @@ export default function DashboardPage() {
     salesRecords.filter(r => r.date === latestDataDate).reduce((s, r) => s + r.salesQuantity, 0),
   [salesRecords, latestDataDate]);
 
-  const totalStock = useMemo(() => getAllStoresTotalStock(inventoryBatches), [inventoryBatches]);
+  const skuCatMap = useMemo(() => new Map(skus.map(s => [s.id, s.category])), [skus]);
+  const totalStock = useMemo(() => getAllStoresTotalStock(inventoryBatches, skuCatMap), [inventoryBatches, skuCatMap]);
 
   const riskItems = useMemo(() => {
     const skuMap = new Map(skus.map(s => [s.id, s.name]));

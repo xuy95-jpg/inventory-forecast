@@ -13,7 +13,7 @@ export default function SummaryTable() {
   const storeId = stores[0]?.id || 'store-001';
 
   const allPredictions = useMemo(() =>
-    skus.map(sku => ({ sku, pred: predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches) }))
+    skus.map(sku => ({ sku, pred: predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches, sku.category) }))
       .filter(p => p.pred.totalStock > 0 || p.pred.twoDayTotal > 0),
   [targetDate, storeId, skus, salesRecords, inventoryBatches]);
 
