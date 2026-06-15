@@ -1,6 +1,6 @@
 import { InventoryBatch } from "@/types";
 
-// 罐罐=整罐(个), 巴斯克=整模(个)+切角(块), 1整模=6块
+// 罐罐=整罐(罐), 巴斯克=整模(个)+切角(块), 1整模=6块
 
 export const mockInventoryBatches: InventoryBatch[] = [
   { id: "batch-001", skuId: "sku-002", storeId: "store-001", productionDate: "2026-06-08", quantity: 11, remainingQuantity: 11, shelfLife: 5, expiryDate: "2026-06-15", batchType: "whole" },
