@@ -25,10 +25,10 @@ export interface SalesRecord {
   date: string; // YYYY-MM-DD
   storeId: string;
   skuId: string;
-  salesQuantity: number; // 当日销量
-  stockQuantity: number; // 当日盘点库存（EOD）
-  actualProduction: number | null; // 实际生产量（可选）
-  createdAt: string; // ISO timestamp
+  salesQuantity: number; // 切角块销量
+  cutStock: number;       // 当日已切库存(块)
+  wholeStock: number;     // 当日整模库存(个)
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -38,10 +38,11 @@ export interface InventoryBatch {
   skuId: string;
   storeId: string;
   productionDate: string; // YYYY-MM-DD
-  quantity: number; // 批次生产数量
-  remainingQuantity: number; // 批次剩余数量
-  shelfLife: number; // 保质期天数（从SKU复制）
-  expiryDate: string; // YYYY-MM-DD = productionDate + shelfLife
+  quantity: number; // 数量（个=整个，块=切角块）
+  remainingQuantity: number; // 剩余数量
+  shelfLife: number; // 保质期天数
+  expiryDate: string; // YYYY-MM-DD
+  batchType: 'whole' | 'cut'; // 整模 or 切角块
 }
 
 /** 生产计划 */
@@ -63,23 +64,19 @@ export interface Holiday {
   isHoliday: boolean;
 }
 
-/** 预测结果 */
-export interface PredictionResult {
-  skuId: string;
+/** 历史预测记录（用于准确率追踪） */
+export interface PredictionRecord {
+  id: string;
+  date: string;           // 预测日期
   storeId: string;
-  date: string;
-  predictedSales: number; // 预测销量
-  availableStock: number; // 可售库存
-  suggestedProduction: number; // 建议生产量
-  riskLevel: 'low' | 'medium' | 'high'; // 风险等级
-  confidence: number; // 置信度 0-1
-  factors: PredictionFactor[];
-}
-
-export interface PredictionFactor {
-  name: string;
-  value: number;
-  weight: number;
+  skuId: string;
+  predictedTomorrowSales: number;    // AI预测明日销量
+  predictedDayAfterSales: number;    // AI预测后日销量
+  predictedProductionBlocks: number; // AI建议生产(块)
+  predictedProductionUnits: number;  // AI建议制作(个)
+  actualSales: number | null;        // 实际销量（事后填入）
+  actualProduction: number | null;   // 实际生产量（事后填入）
+  createdAt: string;
 }
 
 /** Dashboard 统计 */

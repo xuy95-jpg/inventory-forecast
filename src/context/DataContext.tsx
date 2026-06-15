@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { Sku, Store, SalesRecord, InventoryBatch, ProductionPlan, Holiday } from '@/types';
+import { Sku, Store, SalesRecord, InventoryBatch, ProductionPlan, Holiday, PredictionRecord } from '@/types';
 import { mockSkus } from '@/data/mock-skus';
 import { mockStores } from '@/data/mock-stores';
 import { mockSalesRecords } from '@/data/mock-sales';
@@ -16,179 +16,153 @@ interface DataContextType {
   salesRecords: SalesRecord[];
   inventoryBatches: InventoryBatch[];
   productionPlans: ProductionPlan[];
+  predictionRecords: PredictionRecord[];
   holidays: Holiday[];
   initialized: boolean;
-  addSalesRecord: (record: Omit<SalesRecord, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  updateSalesRecord: (id: string, updates: Partial<SalesRecord>) => void;
-  deleteSalesRecord: (id: string) => void;
-  importSalesRecords: (records: SalesRecord[]) => void;
+  // Sales (batch entry)
+  addSalesRecords: (records: Omit<SalesRecord, 'id' | 'createdAt' | 'updatedAt'>[]) => void;
+  // Inventory
   addInventoryBatch: (batch: Omit<InventoryBatch, 'id'>) => void;
   updateInventoryBatch: (id: string, updates: Partial<InventoryBatch>) => void;
-  addProductionPlan: (plan: Omit<ProductionPlan, 'id'>) => void;
-  updateProductionPlan: (id: string, updates: Partial<ProductionPlan>) => void;
-  confirmProductionPlan: (id: string, actualQuantity: number, notes: string) => void;
+  // Production plans
+  saveProductionPlan: (plan: Omit<ProductionPlan, 'id'>) => void;
   deleteProductionPlan: (id: string) => void;
+  // Predictions
+  addPredictionRecords: (records: Omit<PredictionRecord, 'id'>[]) => void;
+  // Holidays
   addHoliday: (holiday: Holiday) => void;
   deleteHoliday: (date: string) => void;
+  // Helpers
   getSkuById: (id: string) => Sku | undefined;
   getStoreById: (id: string) => Store | undefined;
-  getStoreByCode: (code: string) => Store | undefined;
-  getSkuByName: (name: string) => Sku | undefined;
 }
 
 const DataContext = createContext<DataContextType | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [skus] = useState<Sku[]>(mockSkus);
-  const [stores] = useState<Store[]>(mockStores);
+  const [skus] = useState(mockSkus);
+  const [stores] = useState(mockStores);
   const [salesRecords, setSalesRecords] = useState<SalesRecord[]>([]);
   const [inventoryBatches, setInventoryBatches] = useState<InventoryBatch[]>([]);
   const [productionPlans, setProductionPlans] = useState<ProductionPlan[]>([]);
+  const [predictionRecords, setPredictionRecords] = useState<PredictionRecord[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [initialized, setInitialized] = useState(false);
 
-  // ============================================================
-  // Init: load from Supabase, re-seed if data version changed
-  // ============================================================
   useEffect(() => {
     if (initialized) return;
-    init();
-    async function init() {
-      const VER = 'v4'; // bump to force re-seed
-      const localVer = typeof window !== 'undefined' ? localStorage.getItem('data_version') : null;
+    const VER = 'v5';
+    const localVer = typeof window !== 'undefined' ? localStorage.getItem('data_version') : null;
 
+    async function init() {
       try {
         if (localVer !== VER) {
-          // Version changed — clear old Supabase data and re-seed
           await supabase.from('sales_records').delete().neq('id', '_x_');
           await supabase.from('inventory_batches').delete().neq('id', '_x_');
+          await supabase.from('production_plans').delete().neq('id', '_x_');
+          await supabase.from('prediction_records').delete().neq('id', '_x_');
 
-          const s = mockSalesRecords.map(r => ({
-            id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
-            sales_quantity: r.salesQuantity, stock_quantity: r.stockQuantity,
-            actual_production: r.actualProduction, created_at: r.createdAt, updated_at: r.updatedAt,
-          }));
-          for (let i = 0; i < s.length; i += 500) {
-            await supabase.from('sales_records').upsert(s.slice(i, i + 500));
+          for (let i = 0; i < mockSalesRecords.length; i += 500) {
+            await supabase.from('sales_records').upsert(
+              mockSalesRecords.slice(i, i + 500).map(r => ({
+                id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
+                sales_quantity: r.salesQuantity, cut_stock: r.cutStock, whole_stock: r.wholeStock,
+                created_at: r.createdAt, updated_at: r.updatedAt,
+              }))
+            );
           }
 
           await supabase.from('inventory_batches').upsert(mockInventoryBatches.map(b => ({
             id: b.id, sku_id: b.skuId, store_id: b.storeId,
             production_date: b.productionDate, quantity: b.quantity,
-            remaining_quantity: b.remainingQuantity, shelf_life: b.shelfLife, expiry_date: b.expiryDate,
+            remaining_quantity: b.remainingQuantity, shelf_life: b.shelfLife,
+            expiry_date: b.expiryDate, batch_type: b.batchType,
           })));
+
           await supabase.from('holidays').upsert(mockHolidays.map(h => ({ date: h.date, name: h.name, is_holiday: h.isHoliday })));
-          await supabase.from('skus').upsert(mockSkus.map(sk => ({ id: sk.id, name: sk.name, category: sk.category, shelf_life: sk.shelfLife, unit: sk.unit })));
-          await supabase.from('stores').upsert(mockStores.map(st => ({ id: st.id, name: st.name, code: st.code, region: st.region })));
+          await supabase.from('skus').upsert(mockSkus.map(s => ({ id: s.id, name: s.name, category: s.category, shelf_life: s.shelfLife, unit: s.unit })));
+          await supabase.from('stores').upsert(mockStores.map(s => ({ id: s.id, name: s.name, code: s.code, region: s.region })));
 
           localStorage.setItem('data_version', VER);
-          console.log('✅ 数据已更新 (v3, ' + s.length + ' 条)');
-        } else {
-          console.log('📦 数据版本 ' + VER + '，无需更新');
+          console.log('✅ v5 data synced (' + mockSalesRecords.length + ' sales)');
         }
-      } catch (err) {
-        console.warn('⚠️ Supabase 连接失败，使用本地数据');
-      }
 
-      setSalesRecords(mockSalesRecords);
-      setInventoryBatches(mockInventoryBatches);
-      setHolidays(mockHolidays);
+        // Load current data
+        const { data: sales } = await supabase.from('sales_records').select('*').order('date', { ascending: true });
+        if (sales?.length) setSalesRecords(sales.map((r: Record<string, unknown>) => ({
+          id: r.id as string, date: r.date as string, storeId: r.store_id as string, skuId: r.sku_id as string,
+          salesQuantity: r.sales_quantity as number, cutStock: (r as Record<string,unknown>).cut_stock as number || 0, wholeStock: (r as Record<string,unknown>).whole_stock as number || 0,
+          createdAt: r.created_at as string, updatedAt: r.updated_at as string,
+        })));
+        else setSalesRecords(mockSalesRecords);
+
+        const { data: inv } = await supabase.from('inventory_batches').select('*');
+        setInventoryBatches(inv?.length ? (inv as Record<string,unknown>[]).map(r => ({
+          id: r.id as string, skuId: r.sku_id as string, storeId: r.store_id as string,
+          productionDate: r.production_date as string, quantity: r.quantity as number,
+          remainingQuantity: r.remaining_quantity as number, shelfLife: r.shelf_life as number,
+          expiryDate: r.expiry_date as string, batchType: ((r as Record<string,unknown>).batch_type as string || 'whole') as 'whole' | 'cut',
+        })) : mockInventoryBatches);
+
+        setHolidays(mockHolidays);
+      } catch {
+        setSalesRecords(mockSalesRecords);
+        setInventoryBatches(mockInventoryBatches);
+        setHolidays(mockHolidays);
+      }
       setInitialized(true);
+    }
+    init();
+  }, []);
+
+  const addSalesRecords = useCallback((records: Omit<SalesRecord, 'id' | 'createdAt' | 'updatedAt'>[]) => {
+    const now = new Date().toISOString();
+    const newRecs: SalesRecord[] = records.map(r => ({
+      ...r, id: 'sales-' + r.date + '-' + r.storeId + '-' + r.skuId, createdAt: now, updatedAt: now,
+    }));
+    setSalesRecords(prev => [...prev.filter(r => !newRecs.some(n => n.id === r.id)), ...newRecs]);
+    for (let i = 0; i < newRecs.length; i += 100) {
+      supabase.from('sales_records').upsert(newRecs.slice(i, i + 100).map(r => ({ id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId, sales_quantity: r.salesQuantity, cut_stock: r.cutStock, whole_stock: r.wholeStock, created_at: r.createdAt, updated_at: r.updatedAt }))).then();
     }
   }, []);
 
-  // ============================================================
-  // CRUD
-  // ============================================================
-  const addSalesRecord = useCallback((record: Omit<SalesRecord, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const now = new Date().toISOString();
-    const id = `sales-${record.date}-${record.storeId}-${record.skuId}`;
-    setSalesRecords(prev => [...prev.filter(r => r.id !== id), { ...record, id, createdAt: now, updatedAt: now }]);
-    supabase.from('sales_records').upsert({ id, date: record.date, store_id: record.storeId, sku_id: record.skuId, sales_quantity: record.salesQuantity, stock_quantity: record.stockQuantity, actual_production: record.actualProduction, updated_at: now }).then(({ error }) => { if (error) console.warn(error.message); });
+  const addInventoryBatch = useCallback((b: Omit<InventoryBatch, 'id'>) => {
+    setInventoryBatches(prev => [...prev, { ...b, id: generateId() }]);
   }, []);
 
-  const updateSalesRecord = useCallback((id: string, updates: Partial<SalesRecord>) => {
-    setSalesRecords(prev => prev.map(r => r.id === id ? { ...r, ...updates, updatedAt: new Date().toISOString() } : r));
-    const u: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (updates.salesQuantity !== undefined) u.sales_quantity = updates.salesQuantity;
-    if (updates.stockQuantity !== undefined) u.stock_quantity = updates.stockQuantity;
-    supabase.from('sales_records').update(u).eq('id', id).then(({ error }) => { if (error) console.warn(error.message); });
+  const updateInventoryBatch = useCallback((id: string, u: Partial<InventoryBatch>) => {
+    setInventoryBatches(prev => prev.map(b => b.id === id ? { ...b, ...u } : b));
   }, []);
 
-  const deleteSalesRecord = useCallback((id: string) => {
-    setSalesRecords(prev => prev.filter(r => r.id !== id));
-    supabase.from('sales_records').delete().eq('id', id).then(({ error }) => { if (error) console.warn(error.message); });
-  }, []);
-
-  const importSalesRecords = useCallback((records: SalesRecord[]) => {
-    setSalesRecords(prev => { const ids = new Set(prev.map(r => r.id)); return [...prev, ...records.filter(r => !ids.has(r.id))]; });
-    const ins = records.map(r => ({ id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId, sales_quantity: r.salesQuantity, stock_quantity: r.stockQuantity, actual_production: r.actualProduction, created_at: r.createdAt, updated_at: r.updatedAt }));
-    for (let i = 0; i < ins.length; i += 500) supabase.from('sales_records').upsert(ins.slice(i, i + 500)).then(({ error }) => { if (error) console.warn(error.message); });
-  }, []);
-
-  const addInventoryBatch = useCallback((batch: Omit<InventoryBatch, 'id'>) => {
-    const b: InventoryBatch = { ...batch, id: generateId() };
-    setInventoryBatches(prev => [...prev, b]);
-    supabase.from('inventory_batches').insert({ id: b.id, sku_id: b.skuId, store_id: b.storeId, production_date: b.productionDate, quantity: b.quantity, remaining_quantity: b.remainingQuantity, shelf_life: b.shelfLife, expiry_date: b.expiryDate }).then(({ error }) => { if (error) console.warn(error.message); });
-  }, []);
-
-  const updateInventoryBatch = useCallback((id: string, updates: Partial<InventoryBatch>) => {
-    setInventoryBatches(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
-    const u: Record<string, unknown> = {};
-    if (updates.remainingQuantity !== undefined) u.remaining_quantity = updates.remainingQuantity;
-    supabase.from('inventory_batches').update(u).eq('id', id).then(({ error }) => { if (error) console.warn(error.message); });
-  }, []);
-
-  const addProductionPlan = useCallback((plan: Omit<ProductionPlan, 'id'>) => {
-    const id = `plan-${plan.date}-${plan.storeId}-${plan.skuId}`;
+  const saveProductionPlan = useCallback((plan: Omit<ProductionPlan, 'id'>) => {
+    const id = 'plan-' + plan.date + '-' + plan.storeId + '-' + plan.skuId;
     setProductionPlans(prev => [...prev.filter(p => p.id !== id), { ...plan, id }]);
-    supabase.from('production_plans').upsert({ id, date: plan.date, store_id: plan.storeId, sku_id: plan.skuId, suggested_quantity: plan.suggestedQuantity, actual_quantity: plan.actualQuantity, confirmed_at: plan.confirmedAt, notes: plan.notes }).then(({ error }) => { if (error) console.warn(error.message); });
-  }, []);
-
-  const updateProductionPlan = useCallback((id: string, updates: Partial<ProductionPlan>) => {
-    setProductionPlans(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
-    const u: Record<string, unknown> = {};
-    if (updates.suggestedQuantity !== undefined) u.suggested_quantity = updates.suggestedQuantity;
-    if (updates.actualQuantity !== undefined) u.actual_quantity = updates.actualQuantity;
-    if (updates.notes !== undefined) u.notes = updates.notes;
-    supabase.from('production_plans').update(u).eq('id', id).then(({ error }) => { if (error) console.warn(error.message); });
-  }, []);
-
-  const confirmProductionPlan = useCallback((id: string, actualQuantity: number, notes: string) => {
-    const now = new Date().toISOString();
-    setProductionPlans(prev => prev.map(p => p.id === id ? { ...p, actualQuantity, notes, confirmedAt: now } : p));
-    supabase.from('production_plans').update({ actual_quantity: actualQuantity, notes, confirmed_at: now }).eq('id', id).then(({ error }) => { if (error) console.warn(error.message); });
+    supabase.from('production_plans').upsert({ id, date: plan.date, store_id: plan.storeId, sku_id: plan.skuId, suggested_quantity: plan.suggestedQuantity, actual_quantity: plan.actualQuantity, confirmed_at: plan.confirmedAt, notes: plan.notes }).then();
   }, []);
 
   const deleteProductionPlan = useCallback((id: string) => {
     setProductionPlans(prev => prev.filter(p => p.id !== id));
-    supabase.from('production_plans').delete().eq('id', id).then(({ error }) => { if (error) console.warn(error.message); });
   }, []);
 
-  const addHoliday = useCallback((holiday: Holiday) => {
-    setHolidays(prev => [...prev.filter(h => h.date !== holiday.date), holiday]);
-    supabase.from('holidays').upsert({ date: holiday.date, name: holiday.name, is_holiday: holiday.isHoliday }).then(({ error }) => { if (error) console.warn(error.message); });
+  const addPredictionRecords = useCallback((records: Omit<PredictionRecord, 'id'>[]) => {
+    const now = new Date().toISOString();
+    const newRecs = records.map(r => ({ ...r, id: generateId(), createdAt: now }));
+    setPredictionRecords(prev => [...prev, ...newRecs]);
+  }, []);
+
+  const addHoliday = useCallback((h: Holiday) => {
+    setHolidays(prev => [...prev.filter(x => x.date !== h.date), h]);
   }, []);
 
   const deleteHoliday = useCallback((date: string) => {
     setHolidays(prev => prev.filter(h => h.date !== date));
-    supabase.from('holidays').delete().eq('date', date).then(({ error }) => { if (error) console.warn(error.message); });
   }, []);
 
   const getSkuById = useCallback((id: string) => skus.find(s => s.id === id), [skus]);
   const getStoreById = useCallback((id: string) => stores.find(s => s.id === id), [stores]);
-  const getStoreByCode = useCallback((code: string) => stores.find(s => s.code === code), [stores]);
-  const getSkuByName = useCallback((name: string) => skus.find(s => s.name === name), [skus]);
 
   return (
-    <DataContext.Provider value={{
-      skus, stores, salesRecords, inventoryBatches, productionPlans, holidays, initialized,
-      addSalesRecord, updateSalesRecord, deleteSalesRecord, importSalesRecords,
-      addInventoryBatch, updateInventoryBatch,
-      addProductionPlan, updateProductionPlan, confirmProductionPlan, deleteProductionPlan,
-      addHoliday, deleteHoliday,
-      getSkuById, getStoreById, getStoreByCode, getSkuByName,
-    }}>
+    <DataContext.Provider value={{ skus, stores, salesRecords, inventoryBatches, productionPlans, predictionRecords, holidays, initialized, addSalesRecords, addInventoryBatch, updateInventoryBatch, saveProductionPlan, deleteProductionPlan, addPredictionRecords, addHoliday, deleteHoliday, getSkuById, getStoreById }}>
       {children}
     </DataContext.Provider>
   );
@@ -196,6 +170,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
 export function useData(): DataContextType {
   const c = useContext(DataContext);
-  if (!c) throw new Error('useData must be used within a DataProvider');
+  if (!c) throw new Error('useData must be used within DataProvider');
   return c;
 }

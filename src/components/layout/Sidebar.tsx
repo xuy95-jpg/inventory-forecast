@@ -7,7 +7,6 @@ import {
   FileSpreadsheet,
   BrainCircuit,
   BarChart3,
-  ClipboardCheck,
   ChevronLeft,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -15,9 +14,8 @@ import { useState } from 'react';
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/data-entry', label: '数据录入', icon: FileSpreadsheet },
-  { href: '/prediction', label: 'AI预测', icon: BrainCircuit },
+  { href: '/prediction', label: 'AI预测&生产', icon: BrainCircuit },
   { href: '/summary', label: '总汇总', icon: BarChart3 },
-  { href: '/production-plan', label: '生产计划', icon: ClipboardCheck },
 ];
 
 export default function Sidebar() {

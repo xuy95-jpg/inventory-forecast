@@ -21,8 +21,4 @@ export const mockSkus: Sku[] = [
   { id: "sku-018", name: "葡萄罐罐", category: "罐罐", shelfLife: 5, unit: "罐" },
   { id: "sku-019", name: "泰奶罐罐", category: "罐罐", shelfLife: 5, unit: "罐" },
   { id: "sku-020", name: "OMAKASE", category: "OMAKASE", shelfLife: 2, unit: "份" },
-  { id: "sku-021", name: "OM咸芝士", category: "OMAKASE", shelfLife: 2, unit: "个" },
-  { id: "sku-022", name: "OM香爆了", category: "OMAKASE", shelfLife: 2, unit: "个" },
-  { id: "sku-023", name: "OM黑巧", category: "OMAKASE", shelfLife: 2, unit: "个" },
-  { id: "sku-024", name: "OM牛肝菌", category: "OMAKASE", shelfLife: 2, unit: "个" },
 ];
