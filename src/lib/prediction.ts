@@ -99,10 +99,17 @@ function predictSingleDay(targetDate: string, storeId: string, skuId: string, sa
     base = latest;
   }
 
-  // 周末加权（工作日节日销量与普通工作日接近，无需单独节日加成）
+  // 周末/节假日加权
+  // 节日落在工作日：叠加节日加成（元旦+44%, 劳动节+24%, 取均值1.30）
+  // 节日落在周末（端午节/情人节）：不叠(周末本身已高)
   const isWeekendDay = [0, 6].includes(new Date(targetDate).getDay());
+  const isHolidayDay = holidays ? isHoliday(targetDate, holidays) : false;
   let multiplier = 1.0;
-  if (isWeekendDay) multiplier += 0.20;
+  if (isHolidayDay && !isWeekendDay) {
+    multiplier = 1.30;  // 工作日+节日
+  } else if (isWeekendDay) {
+    multiplier = 1.20;  // 周末(节日落在周末不再额外加成)
+  }
 
   if (recent3.length >= 2) {
     const trend = recent3[0].qty / Math.max(1, recent3[1].qty);
