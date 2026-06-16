@@ -81,7 +81,7 @@ function getSplitStock(storeId: string, skuId: string, batches: InventoryBatch[]
 }
 
 /** 预测单日销量 */
-function predictSingleDay(targetDate: string, storeId: string, skuId: string, salesData: SalesRecord[]): number {
+function predictSingleDay(targetDate: string, storeId: string, skuId: string, salesData: SalesRecord[], holidays?: Holiday[]): number {
   const recent3 = getMostRecentSales(storeId, skuId, salesData, 3);
   const latest = recent3.length > 0 ? recent3[0].qty : 0;
   const avg3 = recent3.length > 0 ? recent3.reduce((a, b) => a + b.qty, 0) / recent3.length : 0;
@@ -99,8 +99,12 @@ function predictSingleDay(targetDate: string, storeId: string, skuId: string, sa
     base = latest;
   }
 
+  // 周末/节假日加权
   const isWeekendDay = [0, 6].includes(new Date(targetDate).getDay());
-  let multiplier = isWeekendDay ? 1.20 : 1.0;
+  const isHolidayDay = holidays ? isHoliday(targetDate, holidays) : false;
+  let multiplier = 1.0;
+  if (isWeekendDay) multiplier += 0.20;
+  if (isHolidayDay) multiplier += 0.30;  // 节假日比周末加更多
 
   if (recent3.length >= 2) {
     const trend = recent3[0].qty / Math.max(1, recent3[1].qty);
@@ -123,15 +127,16 @@ export function predictTwoDay(
   salesData: SalesRecord[],
   inventoryBatches: InventoryBatch[],
   skuCategory?: string,
+  holidays?: Holiday[],
 ): TwoDayPrediction {
   const cat = skuCategory || '6寸巴斯克';
   const isCanned = cat === '罐罐';
   const tomorrow = productionDate;
   const dayAfter = addDays(tomorrow, 1);
 
-  // 预测两日销量
-  const tomorrowSales = predictSingleDay(tomorrow, storeId, skuId, salesData);
-  const dayAfterSales = predictSingleDay(dayAfter, storeId, skuId, salesData);
+  // 预测两日销量（传入节假日配置）
+  const tomorrowSales = predictSingleDay(tomorrow, storeId, skuId, salesData, holidays);
+  const dayAfterSales = predictSingleDay(dayAfter, storeId, skuId, salesData, holidays);
   const totalDemand = tomorrowSales + dayAfterSales;
 
   // 当前库存
@@ -163,7 +168,7 @@ export function predictTwoDay(
 export function predictOmakase(
   productionDate: string, storeId: string,
   salesData: SalesRecord[], inventoryBatches: InventoryBatch[],
-  skus: Sku[],
+  skus: Sku[], holidays?: Holiday[],
 ): TwoDayPrediction {
   let tomorrowSales = 0, dayAfterSales = 0, cutStock = 0, wholeStock = 0;
 
@@ -171,7 +176,7 @@ export function predictOmakase(
     const parentName = OM_TO_PARENT[omName];
     const parentSku = skus.find(s => s.name === parentName);
     if (!parentSku) continue;
-    const pred = predictTwoDay(productionDate, storeId, parentSku.id, salesData, inventoryBatches, parentSku.category);
+    const pred = predictTwoDay(productionDate, storeId, parentSku.id, salesData, inventoryBatches, parentSku.category, holidays);
     tomorrowSales += Math.ceil(pred.tomorrowSales * OM_RATIO);
     dayAfterSales += Math.ceil(pred.dayAfterSales * OM_RATIO);
     cutStock += pred.cutStock;

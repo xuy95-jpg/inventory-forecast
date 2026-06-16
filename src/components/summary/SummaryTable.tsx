@@ -7,7 +7,7 @@ import { addDays, todayStr } from '@/lib/helpers';
 import { Calculator, History } from 'lucide-react';
 
 export default function SummaryTable() {
-  const { stores, skus, salesRecords, inventoryBatches } = useData();
+  const { stores, skus, salesRecords, inventoryBatches, holidays } = useData();
   const storeId = stores[0]?.id || 'store-001';
 
   // Latest date with actual data
@@ -34,7 +34,7 @@ export default function SummaryTable() {
   // Future: predictions
   const predictionData = useMemo(() => {
     if (isPast) return [];
-    return skus.map(sku => ({ sku, pred: predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches, sku.category) }))
+    return skus.map(sku => ({ sku, pred: predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches, sku.category, holidays) }))
       .filter(p => p.pred.totalStock > 0 || p.pred.twoDayTotal > 0);
   }, [isPast, targetDate, storeId, skus, salesRecords, inventoryBatches]);
 

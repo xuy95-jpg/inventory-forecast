@@ -8,7 +8,7 @@ import { addDays, todayStr } from '@/lib/helpers';
 import { Check, AlertTriangle, TrendingUp, Package } from 'lucide-react';
 
 export default function PredictionPage() {
-  const { stores, skus, salesRecords, inventoryBatches, saveProductionPlan } = useData();
+  const { stores, skus, salesRecords, inventoryBatches, holidays, saveProductionPlan } = useData();
   const [targetDate, setTargetDate] = useState(addDays(todayStr(), 1));
   const [edits, setEdits] = useState<Record<string, number>>({});
   const [confirmed, setConfirmed] = useState(false);
@@ -18,7 +18,7 @@ export default function PredictionPage() {
   // Predict all SKUs
   const predictions = useMemo(() => {
     return skus.map(sku => {
-      const pred = predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches, sku.category);
+      const pred = predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches, sku.category, holidays);
       return { sku, pred };
     }).filter(p => {
       // Filter only products with stock or sales history
