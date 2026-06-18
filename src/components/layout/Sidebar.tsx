@@ -76,7 +76,7 @@ export default function Sidebar() {
       {!collapsed && (
         <div className="p-3 border-t border-gray-100">
           <div className="text-xs text-gray-400">MVP v0.1.0</div>
-          <div className="text-xs text-gray-400">本地离线版</div>
+          <div className="text-xs text-gray-400">云端版 · Supabase</div>
         </div>
       )}
     </aside>

@@ -34,7 +34,7 @@ interface DataContextType {
 
 const DataContext = createContext<DataContextType | null>(null);
 
-const VER = 'v9';
+const VER = 'v10';
 
 function mapSales(r: Record<string, unknown>): SalesRecord {
   return {
