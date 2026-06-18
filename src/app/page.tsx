@@ -14,9 +14,6 @@ import { Package, ShoppingCart, Calendar, AlertTriangle } from 'lucide-react';
 export default function DashboardPage() {
   const { stores, skus: allSkus, salesRecords, inventoryBatches, productionPlans, initialized } = useData();
   const skus = useMemo(() => allSkus.filter(s => s.active), [allSkus]);
-
-  if (!initialized) return <div className="p-8 text-center text-gray-400">⏳ 正在从数据库加载数据...</div>;
-  if (salesRecords.length === 0) return <div className="p-8 text-center text-red-500">⚠️ 数据加载失败：共 0 条记录。请刷新重试，或检查 Supabase 连接。</div>;
   const riskRef = useRef<HTMLDivElement>(null);
 
   const latestDataDate = useMemo(() => {
@@ -43,6 +40,9 @@ export default function DashboardPage() {
   [productionPlans, latestDataDate]);
 
   const scrollToRisk = () => riskRef.current?.scrollIntoView({ behavior: 'smooth' });
+
+  if (!initialized) return <div className="p-8 text-center text-gray-400">⏳ 正在从数据库加载数据...</div>;
+  if (salesRecords.length === 0) return <div className="p-8 text-center text-red-500">⚠️ 数据加载失败：共 0 条记录。</div>;
 
   return (
     <div className="space-y-6">
