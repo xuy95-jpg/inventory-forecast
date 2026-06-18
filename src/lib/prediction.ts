@@ -1,43 +1,38 @@
-import { SalesRecord, Sku, Store, Holiday, InventoryBatch } from '@/types';
-import { addDays, isWeekend, isHoliday } from './helpers';
+import { SalesRecord, Sku, Holiday, InventoryBatch } from '@/types';
+import { addDays } from './helpers';
 
 // ============================================================
-// AI 预测引擎 V3
+// AI 预测引擎 V4
 //
-// 核心逻辑：
-//   1. 预测明天销量(A) + 后天销量(B)
-//   2. 当前总库存 = 已切块数 + 整模×6
-//   3. 两日总需求 = A + B
-//   4. 缺口 = max(0, 总需求 - 总库存)
-//   5. 建议制作量 = ceil(缺口 ÷ 6)
+// 生产阈值分级（基于近30天日均）：
+//   大款(日均≥12): 缺口>1块 → ceil(缺口÷6)个
+//   中款(日均≥5):  缺口>3块 → ceil(缺口÷6)个
+//   小款(日均<5):  缺口>4块 → ceil(缺口÷6)个
 //
-// OM切角 = 巴斯克整只的 1/18
+// OMAKASE: 不单独生产，销量按1/18折算到4个母品
 // ============================================================
 
-const OM_TO_PARENT: Record<string, string> = {
-  'OM咸芝士': '咸芝士', 'OM香爆了': '香爆了',
-  'OM黑巧': '苦巧碎银子', 'OM牛肝菌': '牛肝菌',
-};
+const OM_PARENTS = ['咸芝士', '香爆了', '苦巧碎银子', '牛肝菌'];
 const OM_RATIO = 1 / 18;
-
-// ============================================================
-// 类型
-// ============================================================
 
 export interface TwoDayPrediction {
   skuId: string;
   storeId: string;
-  date: string;           // 生产日期（通常=明天）
-  tomorrowSales: number;   // 明天预测销量(块)
-  dayAfterSales: number;   // 后天预测销量(块)
-  twoDayTotal: number;     // 两天总需求(块)
-  cutStock: number;        // 当前已切库存(块)
-  wholeStock: number;      // 当前整模库存(个)
-  totalStock: number;      // 总库存(块) = cutStock + wholeStock × 6
-  shortage: number;        // 缺口(块) = max(0, totalDemand - totalStock)
-  suggestedBlocks: number; // 建议生产(块)
-  suggestedUnits: number;  // 建议制作(个) = ceil(shortage ÷ 6)
+  date: string;
+  tomorrowSales: number;
+  dayAfterSales: number;
+  twoDayTotal: number;
+  cutStock: number;
+  wholeStock: number;
+  totalStock: number;
+  shortage: number;
+  suggestedBlocks: number;
+  suggestedUnits: number;
+  tier: string;        // 大款/中款/小款
+  threshold: number;   // 触发阈值
+  dailyAvg: number;    // 日均销量
   riskLevel: 'low' | 'medium' | 'high';
+  isOmakase: boolean;  // OMAKASE不单独生产
 }
 
 // ============================================================
@@ -68,7 +63,25 @@ function getSameWeekdayAvg(targetDate: string, storeId: string, skuId: string, w
   return count > 0 ? total / count : 0;
 }
 
-/** 获取SKU拆分库存：区分巴斯克(整模×6+切角) 和 罐罐(整罐×1)*/
+/** 计算近30天日均 */
+function getDailyAvg(storeId: string, skuId: string, salesData: SalesRecord[]): number {
+  const records = salesData
+    .filter(r => r.storeId === storeId && r.skuId === skuId && r.salesQuantity > 0)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  if (records.length === 0) return 0;
+  const cutoff = addDays(records[0].date, -30);
+  const recent = records.filter(r => r.date >= cutoff && r.salesQuantity > 0);
+  if (recent.length === 0) return records.reduce((s, r) => s + r.salesQuantity, 0) / records.length;
+  return recent.reduce((s, r) => s + r.salesQuantity, 0) / recent.length;
+}
+
+/** 生产阈值 */
+function getThreshold(dailyAvg: number): { tier: string; threshold: number } {
+  if (dailyAvg >= 12) return { tier: '大款', threshold: 1 };
+  if (dailyAvg >= 5) return { tier: '中款', threshold: 3 };
+  return { tier: '小款', threshold: 4 };
+}
+
 function getSplitStock(storeId: string, skuId: string, batches: InventoryBatch[], skuCategory: string): { cut: number; whole: number; total: number } {
   let cut = 0, whole = 0;
   for (const b of batches) {
@@ -81,7 +94,7 @@ function getSplitStock(storeId: string, skuId: string, batches: InventoryBatch[]
 }
 
 /** 预测单日销量 */
-function predictSingleDay(targetDate: string, storeId: string, skuId: string, salesData: SalesRecord[], holidays?: Holiday[]): number {
+function predictSingleDay(targetDate: string, storeId: string, skuId: string, salesData: SalesRecord[]): number {
   const recent3 = getMostRecentSales(storeId, skuId, salesData, 3);
   const latest = recent3.length > 0 ? recent3[0].qty : 0;
   const avg3 = recent3.length > 0 ? recent3.reduce((a, b) => a + b.qty, 0) / recent3.length : 0;
@@ -89,73 +102,53 @@ function predictSingleDay(targetDate: string, storeId: string, skuId: string, sa
   const avg4w = getSameWeekdayAvg(targetDate, storeId, skuId, 4, salesData);
 
   let base: number;
-  if (avg4w > 0 && lastWeek > 0) {
-    base = latest * 0.30 + avg3 * 0.25 + lastWeek * 0.25 + avg4w * 0.20;
-  } else if (lastWeek > 0) {
-    base = latest * 0.35 + avg3 * 0.30 + lastWeek * 0.35;
-  } else if (avg3 > 0) {
-    base = latest * 0.5 + avg3 * 0.5;
-  } else {
-    base = latest;
-  }
+  if (avg4w > 0 && lastWeek > 0) base = latest * 0.30 + avg3 * 0.25 + lastWeek * 0.25 + avg4w * 0.20;
+  else if (lastWeek > 0) base = latest * 0.35 + avg3 * 0.30 + lastWeek * 0.35;
+  else if (avg3 > 0) base = latest * 0.5 + avg3 * 0.5;
+  else base = latest;
 
-  // 周末/节假日加权
-  // 节日落在工作日：叠加节日加成（元旦+44%, 劳动节+24%, 取均值1.30）
-  // 节日落在周末（端午节/情人节）：不叠(周末本身已高)
   const isWeekendDay = [0, 6].includes(new Date(targetDate).getDay());
-  const isHolidayDay = holidays ? isHoliday(targetDate, holidays) : false;
-  let multiplier = 1.0;
-  if (isHolidayDay && !isWeekendDay) {
-    multiplier = 1.30;  // 工作日+节日
-  } else if (isWeekendDay) {
-    multiplier = 1.20;  // 周末(节日落在周末不再额外加成)
-  }
-
+  let multiplier = isWeekendDay ? 1.20 : 1.0;
   if (recent3.length >= 2) {
     const trend = recent3[0].qty / Math.max(1, recent3[1].qty);
     if (trend > 1.3) multiplier += 0.05;
     if (trend < 0.7) multiplier -= 0.05;
   }
-
   multiplier = Math.max(0.85, Math.min(1.5, multiplier));
   return Math.ceil(base * multiplier);
 }
 
 // ============================================================
-// 主预测函数：两日滚动
+// 主预测函数
 // ============================================================
 
 export function predictTwoDay(
-  productionDate: string,
-  storeId: string,
-  skuId: string,
-  salesData: SalesRecord[],
-  inventoryBatches: InventoryBatch[],
+  productionDate: string, storeId: string, skuId: string,
+  salesData: SalesRecord[], inventoryBatches: InventoryBatch[],
   skuCategory?: string,
-  holidays?: Holiday[],
 ): TwoDayPrediction {
   const cat = skuCategory || '6寸巴斯克';
   const isCanned = cat === '罐罐';
+  const isOmakase = cat === 'OMAKASE';
   const tomorrow = productionDate;
   const dayAfter = addDays(tomorrow, 1);
 
-  // 预测两日销量（传入节假日配置）
-  const tomorrowSales = predictSingleDay(tomorrow, storeId, skuId, salesData, holidays);
-  const dayAfterSales = predictSingleDay(dayAfter, storeId, skuId, salesData, holidays);
+  const tomorrowSales = predictSingleDay(tomorrow, storeId, skuId, salesData);
+  const dayAfterSales = predictSingleDay(dayAfter, storeId, skuId, salesData);
   const totalDemand = tomorrowSales + dayAfterSales;
 
-  // 当前库存
   const stock = getSplitStock(storeId, skuId, inventoryBatches, cat);
-
-  // 缺口
   const shortage = Math.max(0, totalDemand - stock.total);
 
-  // 建议制作：罐罐1罐=1个，巴斯克6块=1个
-  const multiplier = isCanned ? 1 : 6;
-  const suggestedUnits = Math.ceil(shortage / multiplier);
-  const suggestedBlocks = shortage;
+  const dailyAvg = getDailyAvg(storeId, skuId, salesData);
+  const { tier, threshold } = getThreshold(dailyAvg);
 
-  // 风险
+  const multiplier = isCanned ? 1 : 6;
+  let suggestedUnits = 0;
+  if (shortage > threshold) suggestedUnits = Math.ceil(shortage / multiplier);
+
+  if (isOmakase) suggestedUnits = 0; // OMAKASE 不单独生产
+
   let riskLevel: 'low' | 'medium' | 'high' = 'low';
   const ratio = totalDemand > 0 ? stock.total / totalDemand : 999;
   if (ratio < 0.3) riskLevel = 'high';
@@ -165,39 +158,40 @@ export function predictTwoDay(
     skuId, storeId, date: productionDate,
     tomorrowSales, dayAfterSales, twoDayTotal: totalDemand,
     cutStock: stock.cut, wholeStock: stock.whole, totalStock: stock.total,
-    shortage, suggestedBlocks, suggestedUnits, riskLevel,
+    shortage, suggestedBlocks: shortage > threshold ? shortage : 0, suggestedUnits,
+    tier, threshold, dailyAvg,
+    riskLevel, isOmakase,
   };
 }
 
-/** OMAKASE特殊：基于母品预测折算 */
-export function predictOmakase(
-  productionDate: string, storeId: string,
-  salesData: SalesRecord[], inventoryBatches: InventoryBatch[],
-  skus: Sku[], holidays?: Holiday[],
-): TwoDayPrediction {
-  let tomorrowSales = 0, dayAfterSales = 0, cutStock = 0, wholeStock = 0;
+/** 将OMAKASE销量折算到母品 */
+export function applyOmakaseSplit(
+  omPrediction: TwoDayPrediction,
+  predictions: TwoDayPrediction[],
+  skus: Sku[],
+): TwoDayPrediction[] {
+  if (!omPrediction.isOmakase) return predictions;
+  const omTomorrow = omPrediction.tomorrowSales;
+  const omDayAfter = omPrediction.dayAfterSales;
 
-  for (const omName of Object.keys(OM_TO_PARENT)) {
-    const parentName = OM_TO_PARENT[omName];
-    const parentSku = skus.find(s => s.name === parentName);
-    if (!parentSku) continue;
-    const pred = predictTwoDay(productionDate, storeId, parentSku.id, salesData, inventoryBatches, parentSku.category, holidays);
-    tomorrowSales += Math.ceil(pred.tomorrowSales * OM_RATIO);
-    dayAfterSales += Math.ceil(pred.dayAfterSales * OM_RATIO);
-    cutStock += pred.cutStock;
-    wholeStock += pred.wholeStock;
-  }
-
-  const totalStock = cutStock + wholeStock * 6;
-  const totalDemand = tomorrowSales + dayAfterSales;
-  const shortage = Math.max(0, totalDemand - totalStock);
-  const riskLevel = totalStock < totalDemand * 0.3 ? 'high' : totalStock < totalDemand * 0.6 ? 'medium' : 'low';
-
-  return {
-    skuId: 'sku-omakase', storeId, date: productionDate,
-    tomorrowSales, dayAfterSales, twoDayTotal: totalDemand,
-    cutStock, wholeStock, totalStock,
-    shortage, suggestedBlocks: shortage, suggestedUnits: Math.ceil(shortage / 6),
-    riskLevel,
-  };
+  return predictions.map(p => {
+    const sku = skus.find(s => s.id === p.skuId);
+    if (!sku || !OM_PARENTS.includes(sku.name)) return p;
+    const extraTomorrow = Math.ceil(omTomorrow * OM_RATIO);
+    const extraDayAfter = Math.ceil(omDayAfter * OM_RATIO);
+    const extraTotal = extraTomorrow + extraDayAfter;
+    const newShortage = Math.max(0, p.shortage + extraTotal);
+    const multiplier = sku.category === '罐罐' ? 1 : 6;
+    let newUnits = 0;
+    if (newShortage > p.threshold) newUnits = Math.ceil(newShortage / multiplier);
+    return {
+      ...p,
+      tomorrowSales: p.tomorrowSales + extraTomorrow,
+      dayAfterSales: p.dayAfterSales + extraDayAfter,
+      twoDayTotal: p.twoDayTotal + extraTotal,
+      shortage: newShortage,
+      suggestedBlocks: newShortage > p.threshold ? newShortage : 0,
+      suggestedUnits: newUnits,
+    };
+  });
 }

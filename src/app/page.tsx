@@ -12,7 +12,8 @@ import RiskAlert from '@/components/dashboard/RiskAlert';
 import { Package, ShoppingCart, Calendar, AlertTriangle } from 'lucide-react';
 
 export default function DashboardPage() {
-  const { stores, skus, salesRecords, inventoryBatches, productionPlans, predictionRecords } = useData();
+  const { stores, skus: allSkus, salesRecords, inventoryBatches, productionPlans } = useData();
+  const skus = useMemo(() => allSkus.filter(s => s.active), [allSkus]);
   const riskRef = useRef<HTMLDivElement>(null);
 
   const latestDataDate = useMemo(() => {

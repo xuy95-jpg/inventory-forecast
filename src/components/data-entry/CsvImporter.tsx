@@ -31,7 +31,7 @@ export default function CsvImporter() {
       if (!store) { skipped.push('未知门店: ' + row.storeCode); continue; }
       const sku = skus.find(s => s.name === row.skuName);
       if (!sku) { skipped.push('未知SKU: ' + row.skuName); continue; }
-      records.push({ date: row.date, storeId: store.id, skuId: sku.id, salesQuantity: row.salesQuantity, cutStock: 0, wholeStock: Math.round(row.stockQuantity / 6) });
+      records.push({ date: row.date, storeId: store.id, skuId: sku.id, salesQuantity: row.salesQuantity, cutStock: 0, wholeStock: Math.round(row.stockQuantity / 6), wastage: 0, soldOut: false });
     }
 
     addSalesRecords(records);
