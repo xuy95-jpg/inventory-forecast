@@ -12,7 +12,7 @@ export default function DataEntryPage() {
   const inactiveSkus = useMemo(() => skus.filter(s => !s.active), [skus]);
 
   const [date, setDate] = useState(todayStr());
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState(0); // 保存了多少条
   const [showSkuManager, setShowSkuManager] = useState(false);
   const [newSkuForm, setNewSkuForm] = useState(false);
   const [newSku, setNewSku] = useState({ name: '', category: '6寸巴斯克', shelfLife: 5, unit: '个' });
@@ -48,10 +48,10 @@ export default function DataEntryPage() {
       }));
     if (records.length === 0) return;
     addSalesRecords(records);
+    setSaved(records.length);  // 记住保存了几条
     // Clear values but keep rows
     setRows(prev => { const next: Record<string, { sales: string; cut: string; whole: string; wastage: string; soldOut: boolean }> = {}; Object.keys(prev).forEach(k => { next[k] = { sales: '', cut: '', whole: '', wastage: '', soldOut: false }; }); return next; });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => setSaved(0), 2000);
   };
 
   const filledCount = Object.values(rows).filter(v => v.sales !== '' || v.cut !== '' || v.whole !== '' || v.wastage !== '').length;
@@ -73,7 +73,7 @@ export default function DataEntryPage() {
         </div>
       </div>
 
-      {saved && <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-700">✅ 已保存 {filledCount} 条记录到数据库</div>}
+      {saved > 0 && <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-700">✅ 已保存 {saved} 条记录到数据库</div>}
 
       {/* 品项管理 */}
       {showSkuManager && (
