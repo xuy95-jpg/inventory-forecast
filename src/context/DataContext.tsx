@@ -96,7 +96,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setInventoryBatches(inv?.length ? (inv as Record<string,unknown>[]).map(mapInv) : mockInventoryBatches);
         }
         setHolidays(mockHolidays);
-      } catch {
+      } catch (err) {
+        console.error('Supabase init failed:', err);
         setSalesRecords(mockSalesRecords);
         setInventoryBatches(mockInventoryBatches);
         setHolidays(mockHolidays);
