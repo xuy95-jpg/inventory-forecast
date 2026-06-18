@@ -34,6 +34,29 @@ interface DataContextType {
 
 const DataContext = createContext<DataContextType | null>(null);
 
+const VER = 'v9';
+
+function mapSales(r: Record<string, unknown>): SalesRecord {
+  return {
+    id: r.id as string, date: r.date as string, storeId: r.store_id as string, skuId: r.sku_id as string,
+    salesQuantity: r.sales_quantity as number,
+    cutStock: (r as Record<string,unknown>).cut_stock as number || 0,
+    wholeStock: (r as Record<string,unknown>).whole_stock as number || 0,
+    wastage: (r as Record<string,unknown>).wastage as number || 0,
+    soldOut: (r as Record<string,unknown>).sold_out as boolean || false,
+    createdAt: r.created_at as string, updatedAt: r.updated_at as string,
+  };
+}
+
+function mapInv(r: Record<string, unknown>): InventoryBatch {
+  return {
+    id: r.id as string, skuId: r.sku_id as string, storeId: r.store_id as string,
+    productionDate: r.production_date as string, quantity: r.quantity as number,
+    remainingQuantity: r.remaining_quantity as number, shelfLife: r.shelf_life as number,
+    expiryDate: r.expiry_date as string, batchType: ((r as Record<string,unknown>).batch_type as string || 'whole') as 'whole' | 'cut',
+  };
+}
+
 export function DataProvider({ children }: { children: ReactNode }) {
   const [skus, setSkus] = useState<Sku[]>(mockSkus);
   const [stores] = useState<Store[]>(mockStores);
@@ -46,23 +69,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (initialized) return;
-    const VER = 'v9';
     const localVer = typeof window !== 'undefined' ? localStorage.getItem('data_version') : null;
 
-    async function init() {
+    (async () => {
       try {
         if (localVer !== VER) {
+          // First time — seed mock data to Supabase
           await supabase.from('sales_records').delete().neq('id', '_x_');
           await supabase.from('inventory_batches').delete().neq('id', '_x_');
           for (let i = 0; i < mockSalesRecords.length; i += 500) {
-            await supabase.from('sales_records').upsert(
-              mockSalesRecords.slice(i, i + 500).map(r => ({
-                id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
-                sales_quantity: r.salesQuantity, cut_stock: r.cutStock, whole_stock: r.wholeStock,
-                wastage: r.wastage, sold_out: r.soldOut,
-                created_at: r.createdAt, updated_at: r.updatedAt,
-              }))
-            );
+            await supabase.from('sales_records').upsert(mockSalesRecords.slice(i, i + 500).map(r => ({
+              id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
+              sales_quantity: r.salesQuantity, cut_stock: r.cutStock, whole_stock: r.wholeStock,
+              wastage: r.wastage, sold_out: r.soldOut, created_at: r.createdAt, updated_at: r.updatedAt,
+            })));
           }
           await supabase.from('inventory_batches').upsert(mockInventoryBatches.map(b => ({
             id: b.id, sku_id: b.skuId, store_id: b.storeId, production_date: b.productionDate,
@@ -70,21 +90,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
             expiry_date: b.expiryDate, batch_type: b.batchType,
           })));
           await supabase.from('holidays').upsert(mockHolidays.map(h => ({ date: h.date, name: h.name, is_holiday: h.isHoliday })));
-          await supabase.from('skus').upsert(mockSkus.map(s => ({ id: s.id, name: s.name, category: s.category, shelf_life: s.shelfLife, unit: s.unit, active: s.active })));
           await supabase.from('stores').upsert(mockStores.map(s => ({ id: s.id, name: s.name, code: s.code, region: s.region })));
           localStorage.setItem('data_version', VER);
+          setSalesRecords(mockSalesRecords);
+          setInventoryBatches(mockInventoryBatches);
+          setHolidays(mockHolidays);
+        } else {
+          // Already initialized — load real data from Supabase (includes user entries)
+          const { data: s } = await supabase.from('sales_records').select('*').order('date', { ascending: true });
+          setSalesRecords(s?.length ? (s as Record<string,unknown>[]).map(mapSales) : mockSalesRecords);
+
+          const { data: inv } = await supabase.from('inventory_batches').select('*');
+          setInventoryBatches(inv?.length ? (inv as Record<string,unknown>[]).map(mapInv) : mockInventoryBatches);
+
+          setHolidays(mockHolidays);
         }
-        setSalesRecords(mockSalesRecords);
-        setInventoryBatches(mockInventoryBatches);
-        setHolidays(mockHolidays);
       } catch {
         setSalesRecords(mockSalesRecords);
         setInventoryBatches(mockInventoryBatches);
         setHolidays(mockHolidays);
       }
       setInitialized(true);
-    }
-    init();
+    })();
   }, []);
 
   const addSalesRecords = useCallback((records: Omit<SalesRecord, 'id' | 'createdAt' | 'updatedAt'>[]) => {
@@ -93,14 +120,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ...r, id: 'sales-' + r.date + '-' + r.storeId + '-' + r.skuId, createdAt: now, updatedAt: now,
     }));
     setSalesRecords(prev => [...prev.filter(r => !newRecs.some(n => n.id === r.id)), ...newRecs]);
-
-    // Sync to Supabase
     for (let i = 0; i < newRecs.length; i += 100) {
       supabase.from('sales_records').upsert(newRecs.slice(i, i + 100).map(r => ({
         id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
         sales_quantity: r.salesQuantity, cut_stock: r.cutStock, whole_stock: r.wholeStock,
         wastage: r.wastage, sold_out: r.soldOut, created_at: r.createdAt, updated_at: r.updatedAt,
-      }))).then(({ error }) => { if (error) console.warn('Save error:', error.message); });
+      }))).then();
     }
   }, []);
 
@@ -115,7 +140,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const saveProductionPlan = useCallback((plan: Omit<ProductionPlan, 'id'>) => {
     const id = 'plan-' + plan.date + '-' + plan.storeId + '-' + plan.skuId;
     setProductionPlans(prev => [...prev.filter(p => p.id !== id), { ...plan, id }]);
-    supabase.from('production_plans').upsert({ id, date: plan.date, store_id: plan.storeId, sku_id: plan.skuId, suggested_quantity: plan.suggestedQuantity, actual_quantity: plan.actualQuantity, confirmed_at: plan.confirmedAt, notes: plan.notes }).then(({ error }) => { if (error) console.warn(error.message); });
+    supabase.from('production_plans').upsert({ id, date: plan.date, store_id: plan.storeId, sku_id: plan.skuId, suggested_quantity: plan.suggestedQuantity, actual_quantity: plan.actualQuantity, confirmed_at: plan.confirmedAt, notes: plan.notes }).then();
   }, []);
 
   const savePredictionRecords = useCallback((records: Omit<PredictionRecord, 'id'>[]) => {
@@ -128,7 +153,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         predicted_tomorrow_sales: r.predictedTomorrowSales, predicted_day_after_sales: r.predictedDayAfterSales,
         predicted_production_blocks: r.predictedProductionBlocks, predicted_production_units: r.predictedProductionUnits,
         actual_sales: r.actualSales, actual_production: r.actualProduction, wastage: r.wastage, sold_out: r.soldOut, created_at: r.createdAt,
-      }))).then(({ error }) => { if (error) console.warn(error.message); });
+      }))).then();
     }
   }, []);
 
@@ -138,8 +163,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const addSku = useCallback((sku: Omit<Sku, 'id'>) => {
     const id = 'sku-custom-' + Date.now();
-    const newSku: Sku = { ...sku, id };
-    setSkus(prev => [...prev, newSku]);
+    setSkus(prev => [...prev, { ...sku, id }]);
   }, []);
 
   const addHoliday = useCallback((h: Holiday) => setHolidays(prev => [...prev.filter(x => x.date !== h.date), h]), []);
