@@ -3,10 +3,10 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useData } from '@/context/DataContext';
 import { todayStr } from '@/lib/helpers';
-import { Save, Settings } from 'lucide-react';
+import { Save, Settings, Plus, X } from 'lucide-react';
 
 export default function DataEntryPage() {
-  const { stores, skus, addSalesRecords, toggleSkuActive } = useData();
+  const { stores, skus, addSalesRecords, toggleSkuActive, addSku } = useData();
   const storeId = stores[0]?.id || 'store-001';
   const activeSkus = useMemo(() => skus.filter(s => s.active), [skus]);
   const inactiveSkus = useMemo(() => skus.filter(s => !s.active), [skus]);
@@ -14,6 +14,8 @@ export default function DataEntryPage() {
   const [date, setDate] = useState(todayStr());
   const [saved, setSaved] = useState(false);
   const [showSkuManager, setShowSkuManager] = useState(false);
+  const [newSkuForm, setNewSkuForm] = useState(false);
+  const [newSku, setNewSku] = useState({ name: '', category: '6寸巴斯克', shelfLife: 5, unit: '个' });
 
   // Auto-populate: every active SKU gets a row
   const [rows, setRows] = useState<Record<string, { sales: string; cut: string; whole: string; wastage: string; soldOut: boolean }>>({});
@@ -92,6 +94,40 @@ export default function DataEntryPage() {
           {inactiveSkus.length > 0 && (
             <div className="mt-2 text-xs text-gray-400">已下架: {inactiveSkus.map(s => s.name).join(', ')}</div>
           )}
+
+          {/* 新增产品 */}
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            {!newSkuForm ? (
+              <button onClick={() => setNewSkuForm(true)} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700">
+                <Plus size={12} /> 新增产品
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap">
+                <input type="text" placeholder="产品名" value={newSku.name} onChange={e => setNewSku({...newSku, name: e.target.value})}
+                  className="px-2 py-1 border border-gray-200 rounded text-xs w-32" />
+                <select value={newSku.category} onChange={e => setNewSku({...newSku, category: e.target.value})}
+                  className="px-2 py-1 border border-gray-200 rounded text-xs">
+                  <option value="6寸巴斯克">6寸巴斯克</option>
+                  <option value="罐罐">罐罐</option>
+                  <option value="4寸巴斯克">4寸巴斯克</option>
+                  <option value="OMAKASE">OMAKASE</option>
+                  <option value="其他">其他</option>
+                </select>
+                <input type="number" min={1} max={10} value={newSku.shelfLife} onChange={e => setNewSku({...newSku, shelfLife: parseInt(e.target.value)||5})}
+                  className="px-2 py-1 border border-gray-200 rounded text-xs w-14" placeholder="天数" />
+                <select value={newSku.unit} onChange={e => setNewSku({...newSku, unit: e.target.value})}
+                  className="px-2 py-1 border border-gray-200 rounded text-xs">
+                  <option value="个">个</option>
+                  <option value="罐">罐</option>
+                  <option value="份">份</option>
+                </select>
+                <button onClick={() => {
+                  if (newSku.name.trim()) { addSku({...newSku, active: true}); setNewSku({name:'',category:'6寸巴斯克',shelfLife:5,unit:'个'}); setNewSkuForm(false); }
+                }} className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">添加</button>
+                <button onClick={() => setNewSkuForm(false)} className="p-1 text-gray-400 hover:text-gray-600"><X size={14}/></button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

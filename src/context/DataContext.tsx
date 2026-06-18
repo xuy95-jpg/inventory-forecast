@@ -25,6 +25,7 @@ interface DataContextType {
   saveProductionPlan: (plan: Omit<ProductionPlan, 'id'>) => void;
   savePredictionRecords: (records: Omit<PredictionRecord, 'id'>[]) => void;
   toggleSkuActive: (skuId: string) => void;
+  addSku: (sku: Omit<Sku, 'id'>) => void;
   addHoliday: (holiday: Holiday) => void;
   deleteHoliday: (date: string) => void;
   getSkuById: (id: string) => Sku | undefined;
@@ -135,13 +136,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setSkus(prev => prev.map(s => s.id === skuId ? { ...s, active: !s.active } : s));
   }, []);
 
+  const addSku = useCallback((sku: Omit<Sku, 'id'>) => {
+    const id = 'sku-custom-' + Date.now();
+    const newSku: Sku = { ...sku, id };
+    setSkus(prev => [...prev, newSku]);
+  }, []);
+
   const addHoliday = useCallback((h: Holiday) => setHolidays(prev => [...prev.filter(x => x.date !== h.date), h]), []);
   const deleteHoliday = useCallback((date: string) => setHolidays(prev => prev.filter(h => h.date !== date)), []);
   const getSkuById = useCallback((id: string) => skus.find(s => s.id === id), [skus]);
   const getStoreById = useCallback((id: string) => stores.find(s => s.id === id), [stores]);
 
   return (
-    <DataContext.Provider value={{ skus, stores, salesRecords, inventoryBatches, productionPlans, predictionRecords, holidays, initialized, addSalesRecords, addInventoryBatch, updateInventoryBatch, saveProductionPlan, savePredictionRecords, toggleSkuActive, addHoliday, deleteHoliday, getSkuById, getStoreById }}>
+    <DataContext.Provider value={{ skus, stores, salesRecords, inventoryBatches, productionPlans, predictionRecords, holidays, initialized, addSalesRecords, addInventoryBatch, updateInventoryBatch, saveProductionPlan, savePredictionRecords, toggleSkuActive, addSku, addHoliday, deleteHoliday, getSkuById, getStoreById }}>
       {children}
     </DataContext.Provider>
   );
