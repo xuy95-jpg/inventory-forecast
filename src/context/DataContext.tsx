@@ -34,8 +34,6 @@ interface DataContextType {
 
 const DataContext = createContext<DataContextType | null>(null);
 
-const VER = 'v10';
-
 function mapSales(r: Record<string, unknown>): SalesRecord {
   return {
     id: r.id as string, date: r.date as string, storeId: r.store_id as string, skuId: r.sku_id as string,
@@ -69,14 +67,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (initialized) return;
-    const localVer = typeof window !== 'undefined' ? localStorage.getItem('data_version') : null;
-
     (async () => {
       try {
-        if (localVer !== VER) {
-          // First time — seed mock data to Supabase
-          await supabase.from('sales_records').delete().neq('id', '_x_');
-          await supabase.from('inventory_batches').delete().neq('id', '_x_');
+        // Always load from Supabase first. Only seed if truly empty.
+        const { data: s } = await supabase.from('sales_records').select('*').order('date', { ascending: true });
+        const isEmpty = !s || s.length === 0;
+
+        if (isEmpty) {
           for (let i = 0; i < mockSalesRecords.length; i += 500) {
             await supabase.from('sales_records').upsert(mockSalesRecords.slice(i, i + 500).map(r => ({
               id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
@@ -91,20 +88,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
           })));
           await supabase.from('holidays').upsert(mockHolidays.map(h => ({ date: h.date, name: h.name, is_holiday: h.isHoliday })));
           await supabase.from('stores').upsert(mockStores.map(s => ({ id: s.id, name: s.name, code: s.code, region: s.region })));
-          localStorage.setItem('data_version', VER);
           setSalesRecords(mockSalesRecords);
           setInventoryBatches(mockInventoryBatches);
-          setHolidays(mockHolidays);
         } else {
-          // Already initialized — load real data from Supabase (includes user entries)
-          const { data: s } = await supabase.from('sales_records').select('*').order('date', { ascending: true });
-          setSalesRecords(s?.length ? (s as Record<string,unknown>[]).map(mapSales) : mockSalesRecords);
-
+          setSalesRecords((s as Record<string,unknown>[]).map(mapSales));
           const { data: inv } = await supabase.from('inventory_batches').select('*');
           setInventoryBatches(inv?.length ? (inv as Record<string,unknown>[]).map(mapInv) : mockInventoryBatches);
-
-          setHolidays(mockHolidays);
         }
+        setHolidays(mockHolidays);
       } catch {
         setSalesRecords(mockSalesRecords);
         setInventoryBatches(mockInventoryBatches);
@@ -147,14 +138,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const now = new Date().toISOString();
     const newRecs = records.map(r => ({ ...r, id: generateId(), createdAt: now }));
     setPredictionRecords(prev => [...prev, ...newRecs]);
-    for (let i = 0; i < newRecs.length; i += 100) {
-      supabase.from('prediction_records').upsert(newRecs.slice(i, i + 100).map(r => ({
-        id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
-        predicted_tomorrow_sales: r.predictedTomorrowSales, predicted_day_after_sales: r.predictedDayAfterSales,
-        predicted_production_blocks: r.predictedProductionBlocks, predicted_production_units: r.predictedProductionUnits,
-        actual_sales: r.actualSales, actual_production: r.actualProduction, wastage: r.wastage, sold_out: r.soldOut, created_at: r.createdAt,
-      }))).then();
-    }
   }, []);
 
   const toggleSkuActive = useCallback((skuId: string) => {
