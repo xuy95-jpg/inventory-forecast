@@ -36,22 +36,36 @@ export default function DataEntryPage() {
   };
 
   const handleSave = () => {
+    console.log('== 开始保存 ==');
+    console.log('rows 总数:', Object.keys(rows).length);
+    console.log('date:', date, 'storeId:', storeId);
+    Object.entries(rows).forEach(([k, v]) => {
+      if (v.sales || v.cut || v.whole || v.wastage) console.log('  row:', k, JSON.stringify(v));
+    });
+
     const records = Object.entries(rows)
       .filter(([, v]) => v.sales !== '' || v.cut !== '' || v.whole !== '' || v.wastage !== '')
-      .map(([skuId, v]) => ({
-        date, storeId, skuId,
-        salesQuantity: parseInt(v.sales) || 0,
-        cutStock: parseInt(v.cut) || 0,
-        wholeStock: parseInt(v.whole) || 0,
-        wastage: parseInt(v.wastage) || 0,
-        soldOut: v.soldOut,
-      }));
-    if (records.length === 0) return;
+      .map(([skuId, v]) => {
+        console.log('  saving:', skuId, 'sales=' + v.sales, 'cut=' + v.cut, 'whole=' + v.whole);
+        return {
+          date, storeId, skuId,
+          salesQuantity: parseInt(v.sales) || 0,
+          cutStock: parseInt(v.cut) || 0,
+          wholeStock: parseInt(v.whole) || 0,
+          wastage: parseInt(v.wastage) || 0,
+          soldOut: !!v.soldOut,
+        };
+      });
+
+    console.log('最终 records.length:', records.length);
+    if (records.length === 0) { alert('没有填写任何数据'); return; }
+
     addSalesRecords(records);
-    // Clear values but keep rows
+    console.log('addSalesRecords 已调用');
+
     setRows(prev => {
-      const next = { ...prev };
-      Object.keys(next).forEach(k => { next[k] = { sales: '', cut: '', whole: '', wastage: '', soldOut: false }; });
+      const next: Record<string, { sales: string; cut: string; whole: string; wastage: string; soldOut: boolean }> = {};
+      Object.keys(prev).forEach(k => { next[k] = { sales: '', cut: '', whole: '', wastage: '', soldOut: false }; });
       return next;
     });
     setSaved(true);
