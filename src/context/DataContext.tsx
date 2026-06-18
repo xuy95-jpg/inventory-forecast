@@ -92,6 +92,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ...r, id: 'sales-' + r.date + '-' + r.storeId + '-' + r.skuId, createdAt: now, updatedAt: now,
     }));
     setSalesRecords(prev => [...prev.filter(r => !newRecs.some(n => n.id === r.id)), ...newRecs]);
+
+    // Sync to Supabase
+    for (let i = 0; i < newRecs.length; i += 100) {
+      supabase.from('sales_records').upsert(newRecs.slice(i, i + 100).map(r => ({
+        id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
+        sales_quantity: r.salesQuantity, cut_stock: r.cutStock, whole_stock: r.wholeStock,
+        wastage: r.wastage, sold_out: r.soldOut, created_at: r.createdAt, updated_at: r.updatedAt,
+      }))).then(({ error }) => { if (error) console.warn('Save error:', error.message); });
+    }
   }, []);
 
   const addInventoryBatch = useCallback((b: Omit<InventoryBatch, 'id'>) => {
@@ -105,12 +114,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const saveProductionPlan = useCallback((plan: Omit<ProductionPlan, 'id'>) => {
     const id = 'plan-' + plan.date + '-' + plan.storeId + '-' + plan.skuId;
     setProductionPlans(prev => [...prev.filter(p => p.id !== id), { ...plan, id }]);
+    supabase.from('production_plans').upsert({ id, date: plan.date, store_id: plan.storeId, sku_id: plan.skuId, suggested_quantity: plan.suggestedQuantity, actual_quantity: plan.actualQuantity, confirmed_at: plan.confirmedAt, notes: plan.notes }).then(({ error }) => { if (error) console.warn(error.message); });
   }, []);
 
   const savePredictionRecords = useCallback((records: Omit<PredictionRecord, 'id'>[]) => {
     const now = new Date().toISOString();
     const newRecs = records.map(r => ({ ...r, id: generateId(), createdAt: now }));
     setPredictionRecords(prev => [...prev, ...newRecs]);
+    for (let i = 0; i < newRecs.length; i += 100) {
+      supabase.from('prediction_records').upsert(newRecs.slice(i, i + 100).map(r => ({
+        id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
+        predicted_tomorrow_sales: r.predictedTomorrowSales, predicted_day_after_sales: r.predictedDayAfterSales,
+        predicted_production_blocks: r.predictedProductionBlocks, predicted_production_units: r.predictedProductionUnits,
+        actual_sales: r.actualSales, actual_production: r.actualProduction, wastage: r.wastage, sold_out: r.soldOut, created_at: r.createdAt,
+      }))).then(({ error }) => { if (error) console.warn(error.message); });
+    }
   }, []);
 
   const toggleSkuActive = useCallback((skuId: string) => {
