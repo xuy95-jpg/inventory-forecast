@@ -45,7 +45,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (initialized) return;
-    const VER = 'v8';
+    const VER = 'v9';
     const localVer = typeof window !== 'undefined' ? localStorage.getItem('data_version') : null;
 
     async function init() {
