@@ -126,6 +126,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ...r, id: 'sales-' + r.date + '-' + r.storeId + '-' + r.skuId, createdAt: now, updatedAt: now,
     }));
     setSalesRecords(prev => [...prev.filter(r => !newRecs.some(n => n.id === r.id)), ...newRecs]);
+
+    // Sync sales to Supabase
     for (let i = 0; i < newRecs.length; i += 100) {
       supabase.from('sales_records').upsert(newRecs.slice(i, i + 100).map(r => ({
         id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
@@ -133,6 +135,41 @@ export function DataProvider({ children }: { children: ReactNode }) {
         wastage: r.wastage, sold_out: r.soldOut, created_at: r.createdAt, updated_at: r.updatedAt,
       }))).then();
     }
+
+    // Update inventory batches: overwrite existing for this SKU+store with entered stock
+    newRecs.forEach(r => {
+      const found = mockSkus.find(s => s.id === r.skuId);
+      const sl = found?.shelfLife || 5;
+
+      // Delete old batches for this SKU+store, then insert new
+      supabase.from('inventory_batches').delete().eq('store_id', r.storeId).eq('sku_id', r.skuId).then(() => {
+        const batches = [];
+        const expiry = new Date(r.date); expiry.setDate(expiry.getDate() + sl);
+        const expStr = expiry.toISOString().split('T')[0];
+
+        if (r.wholeStock > 0) {
+          batches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-whole', sku_id: r.skuId, store_id: r.storeId, production_date: r.date, quantity: r.wholeStock, remaining_quantity: r.wholeStock, shelf_life: sl, expiry_date: expStr, batch_type: 'whole' });
+        }
+        if (r.cutStock > 0) {
+          batches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-cut', sku_id: r.skuId, store_id: r.storeId, production_date: r.date, quantity: r.cutStock, remaining_quantity: r.cutStock, shelf_life: sl, expiry_date: expStr, batch_type: 'cut' });
+        }
+        if (batches.length > 0) supabase.from('inventory_batches').upsert(batches).then();
+      });
+    });
+
+    // Also update local state
+    newRecs.forEach(r => {
+      setInventoryBatches(prev => {
+        const filtered = prev.filter(b => !(b.storeId === r.storeId && b.skuId === r.skuId));
+        const sl = 5;
+        const expiry = new Date(r.date); expiry.setDate(expiry.getDate() + sl);
+        const expStr = expiry.toISOString().split('T')[0];
+        const newBatches: InventoryBatch[] = [];
+        if (r.wholeStock > 0) newBatches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-whole', skuId: r.skuId, storeId: r.storeId, productionDate: r.date, quantity: r.wholeStock, remainingQuantity: r.wholeStock, shelfLife: sl, expiryDate: expStr, batchType: 'whole' });
+        if (r.cutStock > 0) newBatches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-cut', skuId: r.skuId, storeId: r.storeId, productionDate: r.date, quantity: r.cutStock, remainingQuantity: r.cutStock, shelfLife: sl, expiryDate: expStr, batchType: 'cut' });
+        return [...filtered, ...newBatches];
+      });
+    });
   }, []);
 
   const addInventoryBatch = useCallback((b: Omit<InventoryBatch, 'id'>) => {
