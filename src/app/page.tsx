@@ -16,6 +16,9 @@ export default function DashboardPage() {
   const skus = useMemo(() => allSkus.filter(s => s.active), [allSkus]);
   const riskRef = useRef<HTMLDivElement>(null);
 
+  // Show a small debug footer (remove later)
+  const debugInfo = `v11 | init=${initialized} | records=${salesRecords.length} | inv=${inventoryBatches.length}`;
+
   const latestDataDate = useMemo(() => {
     if (salesRecords.length === 0) return todayStr();
     const dates = [...new Set(salesRecords.filter(r => r.salesQuantity > 0).map(r => r.date))].sort();
