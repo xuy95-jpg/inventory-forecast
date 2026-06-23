@@ -5,7 +5,9 @@ import { useData } from '@/context/DataContext';
 import { predictTwoDay } from '@/lib/prediction';
 import { getSplitStock } from '@/lib/inventory';
 import { addDays, todayStr } from '@/lib/helpers';
-import { Calculator, History, Download } from 'lucide-react';
+import { Calculator, History, Download, ChevronDown } from 'lucide-react';
+
+type ExportRange = 'day' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth';
 
 export default function SummaryTable() {
   const { stores, skus, salesRecords, inventoryBatches, productionPlans } = useData();
@@ -19,9 +21,58 @@ export default function SummaryTable() {
   }, [salesRecords]);
 
   const [targetDate, setTargetDate] = useState(addDays(latestDataDate, 1));
+  const [exportRange, setExportRange] = useState<ExportRange>('day');
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const isPast = targetDate <= latestDataDate;
 
-  // Historical view: sales + EOD stock + production plan + current stock reference
+  // Helper: date range for export
+  const getDateRange = (range: ExportRange) => {
+    const d = new Date(targetDate);
+    if (range === 'day') return { start: targetDate, end: targetDate };
+    if (range === 'thisWeek') {
+      const start = new Date(d); start.setDate(d.getDate() - d.getDay()); return { start: start.toISOString().split('T')[0], end: targetDate };
+    }
+    if (range === 'lastWeek') {
+      const lastMonday = new Date(d); lastMonday.setDate(d.getDate() - d.getDay() - 7);
+      const lastSunday = new Date(lastMonday); lastSunday.setDate(lastMonday.getDate() + 6);
+      return { start: lastMonday.toISOString().split('T')[0], end: lastSunday.toISOString().split('T')[0] };
+    }
+    if (range === 'thisMonth') {
+      const start = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+      return { start, end: targetDate };
+    }
+    if (range === 'lastMonth') {
+      const lastM = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+      const lastMEnd = new Date(d.getFullYear(), d.getMonth(), 0);
+      return { start: lastM.toISOString().split('T')[0], end: lastMEnd.toISOString().split('T')[0] };
+    }
+    return { start: targetDate, end: targetDate };
+  };
+
+  const rangeLabels: Record<ExportRange, string> = {
+    day: '单日', thisWeek: '本周', lastWeek: '上周', thisMonth: '本月', lastMonth: '上月',
+  };
+
+  // Aggregate history data over a date range
+  const aggregateHistory = (start: string, end: string) => {
+    const records = salesRecords.filter(r => r.date >= start && r.date <= end && r.storeId === storeId);
+    const map: Record<string, { sales: number; cut: number; whole: number; wastage: number; soldOut: boolean }> = {};
+    records.forEach(r => {
+      if (!map[r.skuId]) map[r.skuId] = { sales: 0, cut: 0, whole: 0, wastage: 0, soldOut: false };
+      map[r.skuId].sales += r.salesQuantity;
+      map[r.skuId].cut += r.cutStock;
+      map[r.skuId].whole += r.wholeStock;
+      map[r.skuId].wastage += r.wastage;
+      if (r.soldOut) map[r.skuId].soldOut = true;
+    });
+    return Object.entries(map).map(([skuId, d]) => {
+      const sku = activeSkus.find(s => s.id === skuId);
+      if (!sku) return null;
+      const stock = getSplitStock(inventoryBatches, storeId, skuId, sku.category);
+      return { sku, ...d, curCut: stock.cut, curWhole: stock.whole, curTotal: stock.total };
+    }).filter(Boolean) as { sku: typeof activeSkus[0]; sales: number; cut: number; whole: number; wastage: number; soldOut: boolean; curCut: number; curWhole: number; curTotal: number }[];
+  };
+
   const historyData = useMemo(() => {
     if (!isPast) return [];
     return activeSkus.map(sku => {
@@ -35,9 +86,7 @@ export default function SummaryTable() {
         eodWhole: record?.wholeStock || 0,
         wastage: record?.wastage || 0,
         soldOut: record?.soldOut || false,
-        curCut: stock.cut,
-        curWhole: stock.whole,
-        curTotal: stock.total,
+        curCut: stock.cut, curWhole: stock.whole, curTotal: stock.total,
         aiSuggested: plan?.suggestedQuantity ?? null,
         actualProd: plan?.actualQuantity ?? null,
         wasPlanned: !!plan,
@@ -48,7 +97,6 @@ export default function SummaryTable() {
   const totalSales = useMemo(() => historyData.reduce((s, d) => s + d.salesQty, 0), [historyData]);
   const totalProd = useMemo(() => historyData.reduce((s, d) => s + (d.actualProd || 0), 0), [historyData]);
 
-  // Prediction view
   const predictionData = useMemo(() => {
     if (isPast) return [];
     return activeSkus.filter(s => s.category !== 'OMAKASE').map(sku => ({ sku, pred: predictTwoDay(targetDate, storeId, sku.id, salesRecords, inventoryBatches, sku.category) }))
@@ -58,17 +106,26 @@ export default function SummaryTable() {
   const grandTotal = useMemo(() => predictionData.reduce((s, p) => s + p.pred.suggestedUnits, 0), [predictionData]);
 
   const handleExport = () => {
-    let csv: string;
-    if (isPast) {
-      csv = 'SKU,销量(块),盘存切角,盘存整模,报损,售罄,当前切角库存,当前整模库存,AI建议制作,实际制作\n';
-      historyData.forEach(d => { csv += d.sku.name + ',' + d.salesQty + ',' + d.eodCut + ',' + d.eodWhole + ',' + d.wastage + ',' + (d.soldOut?'是':'否') + ',' + d.curCut + ',' + d.curWhole + ',' + (d.aiSuggested??'') + ',' + (d.actualProd??'') + '\n'; });
-    } else {
-      csv = 'SKU,切角库存,整模库存,总库存,明天预测,后天预测,两日总需,缺口,建议制作,风险\n';
-      predictionData.forEach(({ sku, pred }) => { csv += sku.name + ',' + pred.cutStock + ',' + pred.wholeStock + ',' + pred.totalStock + ',' + pred.tomorrowSales + ',' + pred.dayAfterSales + ',' + pred.twoDayTotal + ',' + pred.shortage + ',' + pred.suggestedUnits + ',' + pred.riskLevel + '\n'; });
-    }
+    const { start, end } = getDateRange(exportRange);
+    const data = aggregateHistory(start, end);
+
+    if (data.length === 0) { alert('该时间段无数据'); return; }
+
+    const totalSales = data.reduce((s,d) => s + d.sales, 0);
+    const csv = 'SKU,销量(块),盘存切角,盘存整模,报损,售罄,当前切角库存,当前整模库存\n' +
+      data.map(d =>
+        d.sku.name + ',' + d.sales + ',' + d.cut + ',' + d.whole + ',' + d.wastage + ',' + (d.soldOut?'是':'否') + ',' + d.curCut + ',' + d.curWhole
+      ).join('\n') +
+      '\n合计,' + totalSales + ',\n' +
+      '\n时间范围,' + start + '~' + end;
+
     const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'nana-' + targetDate + '.csv'; a.click();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const label = start === end ? start : start + '_to_' + end;
+    a.href = url; a.download = 'nana-' + label + '.csv'; a.click();
     URL.revokeObjectURL(url);
+    setShowExportMenu(false);
   };
 
   return (
@@ -77,7 +134,31 @@ export default function SummaryTable() {
         <span className="text-sm font-medium text-gray-700">日期:</span>
         <input type="date" value={targetDate} onChange={e => setTargetDate(e.target.value)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm" />
         <span className={`text-xs px-2 py-1 rounded-full ${isPast ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{isPast ? '📋 历史数据' : '🔮 预测模式'}</span>
-        <button onClick={handleExport} className="ml-auto px-3 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1"><Download size={12} /> 导出CSV</button>
+
+        {/* Export dropdown */}
+        <div className="relative ml-auto">
+          <button onClick={() => setShowExportMenu(!showExportMenu)}
+            className="px-3 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1">
+            <Download size={12} /> 导出 {rangeLabels[exportRange]} <ChevronDown size={10} />
+          </button>
+          {showExportMenu && (
+            <div className="absolute right-0 top-8 z-10 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-32">
+              {(Object.keys(rangeLabels) as ExportRange[]).map(r => (
+                <button key={r} onClick={() => { setExportRange(r); setShowExportMenu(false); }}
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 ${exportRange === r ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-600'}`}>
+                  {rangeLabels[r]}
+                </button>
+              ))}
+              <div className="border-t border-gray-100 mt-1 pt-1">
+                <button onClick={handleExport}
+                  className="w-full text-left px-3 py-1.5 text-xs bg-blue-600 text-white hover:bg-blue-700 font-medium">
+                  确认导出CSV
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {isPast && <span className="text-sm text-gray-500">当日销量: <span className="text-lg font-bold text-blue-600">{totalSales}</span> 块 | 实际制作: <span className="text-lg font-bold text-green-600">{totalProd}</span> 个</span>}
         {!isPast && <span className="text-sm text-gray-500">总制作: <span className="text-lg font-bold text-purple-600">{grandTotal}</span> 个</span>}
       </div>
@@ -116,8 +197,7 @@ export default function SummaryTable() {
                         <td className="px-2 py-2.5 text-center">{d.soldOut ? '🔥' : ''}</td>
                         <td className="px-2 py-2.5 text-center text-purple-600 font-medium">{d.aiSuggested ?? '-'}</td>
                         <td className={`px-2 py-2.5 text-center font-bold ${prodDiff ? 'text-amber-600' : 'text-green-600'}`}>
-                          {d.actualProd ?? '-'}
-                          {prodDiff && <span className="text-xs ml-1">(改)</span>}
+                          {d.actualProd ?? '-'}{prodDiff && <span className="text-xs ml-1">(改)</span>}
                         </td>
                         <td className="px-2 py-2.5 text-center text-gray-400 text-xs">{d.curTotal}</td>
                       </tr>
@@ -129,8 +209,7 @@ export default function SummaryTable() {
                     <td className="px-2 py-2.5 text-center">{historyData.reduce((s,d)=>s+d.eodCut,0)}</td>
                     <td className="px-2 py-2.5 text-center">{historyData.reduce((s,d)=>s+d.eodWhole,0)}</td>
                     <td className="px-2 py-2.5 text-center text-red-500">{historyData.reduce((s,d)=>s+d.wastage,0) || '-'}</td>
-                    <td></td>
-                    <td></td>
+                    <td></td><td></td>
                     <td className="px-2 py-2.5 text-center text-green-700 font-bold">{totalProd}</td>
                     <td></td>
                   </tr>
