@@ -70,8 +70,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         // Always load from Supabase first. Only seed if truly empty.
-        const { data: s } = await supabase.from('sales_records').select('*').order('date', { ascending: true });
-        const isEmpty = !s || s.length === 0;
+        // Use pagination to get ALL records (Supabase defaults to 1000 limit)
+        let allSales: Record<string, unknown>[] = [];
+        let page = 0;
+        const PAGE_SIZE = 1000;
+        while (true) {
+          const { data: s } = await supabase.from('sales_records').select('*').order('date', { ascending: true }).range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+          if (!s || s.length === 0) break;
+          allSales = [...allSales, ...(s as Record<string, unknown>[])];
+          if (s.length < PAGE_SIZE) break;
+          page++;
+        }
+        const isEmpty = allSales.length === 0;
 
         if (isEmpty) {
           for (let i = 0; i < mockSalesRecords.length; i += 500) {
@@ -91,7 +101,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setSalesRecords(mockSalesRecords);
           setInventoryBatches(mockInventoryBatches);
         } else {
-          setSalesRecords((s as Record<string,unknown>[]).map(mapSales));
+          setSalesRecords(allSales.map(mapSales));
           const { data: inv } = await supabase.from('inventory_batches').select('*');
           setInventoryBatches(inv?.length ? (inv as Record<string,unknown>[]).map(mapInv) : mockInventoryBatches);
         }
