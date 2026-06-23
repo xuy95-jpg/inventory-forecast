@@ -83,7 +83,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         const isEmpty = allSales.length === 0;
 
-        if (isEmpty) {
+        // Also check inventory batches separately (may be empty even if sales exist)
+        const { data: invCheck } = await supabase.from('inventory_batches').select('id').limit(1);
+        const invEmpty = !invCheck || invCheck.length === 0;
+
+        if (isEmpty || invEmpty) {
           for (let i = 0; i < mockSalesRecords.length; i += 500) {
             await supabase.from('sales_records').upsert(mockSalesRecords.slice(i, i + 500).map(r => ({
               id: r.id, date: r.date, store_id: r.storeId, sku_id: r.skuId,
