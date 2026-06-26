@@ -2,18 +2,21 @@ import { SalesRecord, Sku, Holiday, InventoryBatch } from '@/types';
 import { addDays } from './helpers';
 
 // ============================================================
-// AI 预测引擎 V4
+// AI 预测引擎 V5 — 库存流转模拟
 //
-// 生产阈值分级（基于近30天日均）：
+// 不是直接"库存 - 需求"，而是逐日模拟 FIFO 消耗：
+//
+//   Day 0（今天）: 所有未过期批次，按到期日排序
+//   Day 1（明天）: 预测销量 → FIFO 消耗最老的 → 剩余库存
+//   Day 2（后天）: 预测销量 → FIFO 消耗剩余的 → 最终剩余
+//
+//   生产量 = ceil(最终缺口 / multiplier)
+//
+// 生产阈值（基于近30天日均）：
 //   大款(日均≥12): 缺口>1块 → ceil(缺口÷6)个
 //   中款(日均≥5):  缺口>3块 → ceil(缺口÷6)个
 //   小款(日均<5):  缺口>4块 → ceil(缺口÷6)个
-//
-// OMAKASE: 不单独生产，销量按1/18折算到4个母品
 // ============================================================
-
-const OM_PARENTS = ['咸芝士', '香爆了', '苦巧碎银子', '牛肝菌'];
-const OM_RATIO = 1 / 18;
 
 export interface TwoDayPrediction {
   skuId: string;
@@ -25,18 +28,71 @@ export interface TwoDayPrediction {
   cutStock: number;
   wholeStock: number;
   totalStock: number;
-  shortage: number;
+  afterTomorrow: number;    // FIFO模拟明天结束后剩余(块)
+  afterDayAfter: number;    // FIFO模拟后天结束后剩余(块)
+  shortage: number;         // 缺口(块)
   suggestedBlocks: number;
   suggestedUnits: number;
-  tier: string;        // 大款/中款/小款
-  threshold: number;   // 触发阈值
-  dailyAvg: number;    // 日均销量
+  tier: string;
+  threshold: number;
+  dailyAvg: number;
   riskLevel: 'low' | 'medium' | 'high';
-  isOmakase: boolean;  // OMAKASE不单独生产
+  isOmakase: boolean;
 }
 
 // ============================================================
-// 内部函数
+// 内部：模拟一天的 FIFO 消耗
+// ============================================================
+
+interface SimBatch {
+  blocks: number;         // 等价块数
+  expiryDate: string;     // 到期日
+}
+
+/** 模拟一天：从 batches 中按到期日顺序消耗 salesBlocks 块，返回剩余 */
+function simulateDay(batches: SimBatch[], salesBlocks: number): { remaining: SimBatch[]; consumed: number; unmet: number } {
+  // Sort FIFO: earliest expiry first
+  const sorted = [...batches].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
+  let left = salesBlocks;
+  const remaining: SimBatch[] = [];
+
+  for (const b of sorted) {
+    if (left <= 0) { remaining.push(b); continue; }
+    if (b.blocks <= left) {
+      left -= b.blocks;
+    } else {
+      remaining.push({ blocks: b.blocks - left, expiryDate: b.expiryDate });
+      left = 0;
+    }
+  }
+
+  return { remaining, consumed: salesBlocks - left, unmet: left };
+}
+
+// ============================================================
+// 内部：从 InventoryBatch[] 构建 SimBatch[]（过滤已过期）
+// ============================================================
+
+function buildSimBatches(storeId: string, skuId: string, batches: InventoryBatch[], forDate: string, skuCategory: string): SimBatch[] {
+  const sim: SimBatch[] = [];
+  for (const b of batches) {
+    if (b.storeId !== storeId || b.skuId !== skuId || b.remainingQuantity <= 0) continue;
+    // 只算在 forDate 之前生产的
+    if (b.productionDate > forDate) continue;
+    // 不能在 forDate 之前已经过期
+    if (b.expiryDate < forDate) continue;
+    const multiplier = (skuCategory === '罐罐' || skuCategory === 'OMAKASE') ? 1 : (b.batchType === 'cut' ? 1 : 6);
+    sim.push({ blocks: b.remainingQuantity * multiplier, expiryDate: b.expiryDate });
+  }
+  return sim;
+}
+
+function sumBlocks(batches: SimBatch[]): number {
+  return batches.reduce((s, b) => s + b.blocks, 0);
+}
+
+// ============================================================
+// 内部：销售预测
 // ============================================================
 
 function getMostRecentSales(storeId: string, skuId: string, salesData: SalesRecord[], count: number): { date: string; qty: number }[] {
@@ -63,7 +119,6 @@ function getSameWeekdayAvg(targetDate: string, storeId: string, skuId: string, w
   return count > 0 ? total / count : 0;
 }
 
-/** 计算近30天日均 */
 function getDailyAvg(storeId: string, skuId: string, salesData: SalesRecord[]): number {
   const records = salesData
     .filter(r => r.storeId === storeId && r.skuId === skuId && r.salesQuantity > 0)
@@ -75,27 +130,12 @@ function getDailyAvg(storeId: string, skuId: string, salesData: SalesRecord[]): 
   return recent.reduce((s, r) => s + r.salesQuantity, 0) / recent.length;
 }
 
-/** 生产阈值 */
 function getThreshold(dailyAvg: number): { tier: string; threshold: number } {
   if (dailyAvg >= 12) return { tier: '大款', threshold: 1 };
   if (dailyAvg >= 5) return { tier: '中款', threshold: 3 };
   return { tier: '小款', threshold: 4 };
 }
 
-function getSplitStock(storeId: string, skuId: string, batches: InventoryBatch[], skuCategory: string, forDate?: string): { cut: number; whole: number; total: number } {
-  let cut = 0, whole = 0;
-  for (const b of batches) {
-    if (b.storeId !== storeId || b.skuId !== skuId || b.remainingQuantity <= 0) continue;
-    // Only count batches produced on or before the reference date
-    if (forDate && b.productionDate && b.productionDate > forDate) continue;
-    if (b.batchType === 'cut') cut += b.remainingQuantity;
-    else whole += b.remainingQuantity;
-  }
-  if (skuCategory === '罐罐') return { cut: 0, whole, total: whole };
-  return { cut, whole, total: cut + whole * 6 };
-}
-
-/** 预测单日销量 */
 function predictSingleDay(targetDate: string, storeId: string, skuId: string, salesData: SalesRecord[]): number {
   const recent3 = getMostRecentSales(storeId, skuId, salesData, 3);
   const latest = recent3.length > 0 ? recent3[0].qty : 0;
@@ -121,52 +161,80 @@ function predictSingleDay(targetDate: string, storeId: string, skuId: string, sa
 }
 
 // ============================================================
-// 主预测函数
+// 主预测函数 — 逐日 FIFO 库存模拟
 // ============================================================
 
 export function predictTwoDay(
-  productionDate: string, storeId: string, skuId: string,
-  salesData: SalesRecord[], inventoryBatches: InventoryBatch[],
+  productionDate: string,
+  storeId: string,
+  skuId: string,
+  salesData: SalesRecord[],
+  inventoryBatches: InventoryBatch[],
   skuCategory?: string,
 ): TwoDayPrediction {
   const cat = skuCategory || '6寸巴斯克';
   const isCanned = cat === '罐罐';
   const isOmakase = cat === 'OMAKASE';
-  const tomorrow = productionDate;
-  const dayAfter = addDays(tomorrow, 1);
+  const today = productionDate;
+  const tomorrow = addDays(today, 0); // Day0 = production day itself
+  const dayAfter = addDays(today, 1);
 
+  // Step 1: 预测两日销量
   const tomorrowSales = predictSingleDay(tomorrow, storeId, skuId, salesData);
   const dayAfterSales = predictSingleDay(dayAfter, storeId, skuId, salesData);
-  const totalDemand = tomorrowSales + dayAfterSales;
 
-  const stock = getSplitStock(storeId, skuId, inventoryBatches, cat, productionDate);
-  const shortage = Math.max(0, totalDemand - stock.total);
+  // Step 2: 构建从 productionDate 起的活跃批次
+  const initialBatches = buildSimBatches(storeId, skuId, inventoryBatches, today, cat);
+  const initialTotal = sumBlocks(initialBatches);
+  const initialCut = inventoryBatches
+    .filter(b => b.storeId === storeId && b.skuId === skuId && b.batchType === 'cut' && b.productionDate <= today && b.expiryDate >= today)
+    .reduce((s, b) => s + b.remainingQuantity, 0);
+  const initialWhole = inventoryBatches
+    .filter(b => b.storeId === storeId && b.skuId === skuId && b.batchType === 'whole' && b.productionDate <= today && b.expiryDate >= today)
+    .reduce((s, b) => s + b.remainingQuantity, 0);
 
+  // Step 3: 模拟 Day 1 — 明天
+  const day1 = simulateDay(initialBatches, tomorrowSales);
+  const afterTomorrow = sumBlocks(day1.remaining);
+
+  // Step 4: 模拟 Day 2 — 后天（从 Day1 剩余开始）
+  const day2 = simulateDay(day1.remaining, dayAfterSales);
+  const afterDayAfter = sumBlocks(day2.remaining);
+
+  // Step 5: 缺口 = 后天模拟后仍未满足的需求 + 明天未满足的
+  const shortage = day1.unmet + day2.unmet;
+
+  // Step 6: 阈值生产建议
   const dailyAvg = getDailyAvg(storeId, skuId, salesData);
   const { tier, threshold } = getThreshold(dailyAvg);
-
   const multiplier = isCanned ? 1 : 6;
   let suggestedUnits = 0;
   if (shortage > threshold) suggestedUnits = Math.ceil(shortage / multiplier);
-
-  if (isOmakase) suggestedUnits = 0; // OMAKASE 不单独生产
+  if (isOmakase) suggestedUnits = 0;
 
   let riskLevel: 'low' | 'medium' | 'high' = 'low';
-  const ratio = totalDemand > 0 ? stock.total / totalDemand : 999;
+  const ratio = initialTotal > 0 ? afterDayAfter / Math.max(1, tomorrowSales + dayAfterSales) : 999;
   if (ratio < 0.3) riskLevel = 'high';
   else if (ratio < 0.6) riskLevel = 'medium';
 
   return {
     skuId, storeId, date: productionDate,
-    tomorrowSales, dayAfterSales, twoDayTotal: totalDemand,
-    cutStock: stock.cut, wholeStock: stock.whole, totalStock: stock.total,
+    tomorrowSales, dayAfterSales, twoDayTotal: tomorrowSales + dayAfterSales,
+    cutStock: initialCut, wholeStock: initialWhole, totalStock: initialTotal,
+    afterTomorrow, afterDayAfter,
     shortage, suggestedBlocks: shortage > threshold ? shortage : 0, suggestedUnits,
     tier, threshold, dailyAvg,
     riskLevel, isOmakase,
   };
 }
 
-/** 将OMAKASE销量折算到母品 */
+// ============================================================
+// OMAKASE 折算
+// ============================================================
+
+const OM_PARENTS = ['咸芝士', '香爆了', '苦巧碎银子', '牛肝菌'];
+const OM_RATIO = 1 / 18;
+
 export function applyOmakaseSplit(
   omPrediction: TwoDayPrediction,
   predictions: TwoDayPrediction[],
