@@ -125,6 +125,7 @@ export default function PredictionPage() {
               <th className="px-2 py-3 text-center text-xs font-medium text-gray-500">总库存</th>
               <th className="px-2 py-3 text-center text-xs font-medium text-gray-500">明天预测</th>
               <th className="px-2 py-3 text-center text-xs font-medium text-gray-500">后天预测</th>
+              <th className="px-2 py-3 text-center text-xs font-medium text-gray-400">明后剩余</th>
               <th className="px-2 py-3 text-center text-xs font-medium text-gray-500">两日总需</th>
               <th className="px-2 py-3 text-center text-xs font-medium text-gray-500">日均</th>
               <th className="px-2 py-3 text-center text-xs font-medium text-gray-500">等级</th>
@@ -146,6 +147,9 @@ export default function PredictionPage() {
                   <td className="px-2 py-2.5 text-center font-medium text-gray-900">{pred?.totalStock ?? '-'}</td>
                   <td className="px-2 py-2.5 text-center text-gray-700">{pred?.tomorrowSales ?? '-'}</td>
                   <td className="px-2 py-2.5 text-center text-gray-700">{pred?.dayAfterSales ?? '-'}</td>
+                  <td className="px-2 py-2.5 text-center text-xs text-gray-400">
+                    {pred ? <>{pred.afterTomorrow} → <span className={pred.afterDayAfter <= 0 ? 'text-red-500 font-medium' : 'text-gray-500'}>{pred.afterDayAfter}</span></> : '-'}
+                  </td>
                   <td className="px-2 py-2.5 text-center font-medium">{pred?.twoDayTotal ?? '-'}</td>
                   <td className="px-2 py-2.5 text-center text-gray-500">{pred ? pred.dailyAvg.toFixed(1) : '-'}</td>
                   <td className="px-2 py-2.5 text-center">
