@@ -1,27 +1,14 @@
 import { InventoryBatch } from "@/types";
 
+// 已FIFO扣减6/18-6/23销量，只保留有剩余未过期的批次
+
 export const mockInventoryBatches: InventoryBatch[] = [
-  { id: "batch-inv-001", skuId: "sku-011", storeId: "store-001", productionDate: "2026-06-22", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
-  { id: "batch-inv-002", skuId: "sku-013", storeId: "store-001", productionDate: "2026-06-22", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
-  { id: "batch-inv-003", skuId: "sku-020", storeId: "store-001", productionDate: "2026-06-22", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-26", batchType: "cut" },
-  { id: "batch-inv-004", skuId: "sku-001", storeId: "store-001", productionDate: "2026-06-22", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
-  { id: "batch-inv-005", skuId: "sku-003", storeId: "store-001", productionDate: "2026-06-22", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
-  { id: "batch-inv-006", skuId: "sku-006", storeId: "store-001", productionDate: "2026-06-22", quantity: 5, remainingQuantity: 5, shelfLife: 4, expiryDate: "2026-06-26", batchType: "cut" },
-  { id: "batch-inv-007", skuId: "sku-006", storeId: "store-001", productionDate: "2026-06-22", quantity: 3, remainingQuantity: 3, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
-  { id: "batch-inv-008", skuId: "sku-009", storeId: "store-001", productionDate: "2026-06-22", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
-  { id: "batch-inv-009", skuId: "sku-011", storeId: "store-001", productionDate: "2026-06-22", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-26", batchType: "cut" },
-  { id: "batch-inv-010", skuId: "sku-011", storeId: "store-001", productionDate: "2026-06-23", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-011", skuId: "sku-021", storeId: "store-001", productionDate: "2026-06-22", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-26", batchType: "cut" },
-  { id: "batch-inv-012", skuId: "sku-021", storeId: "store-001", productionDate: "2026-06-23", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-013", skuId: "sku-021", storeId: "store-001", productionDate: "2026-06-22", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
-  { id: "batch-inv-014", skuId: "sku-013", storeId: "store-001", productionDate: "2026-06-23", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-015", skuId: "sku-016", storeId: "store-001", productionDate: "2026-06-23", quantity: 8, remainingQuantity: 8, shelfLife: 3, expiryDate: "2026-06-26", batchType: "cut" },
-  { id: "batch-inv-016", skuId: "sku-019", storeId: "store-001", productionDate: "2026-06-23", quantity: 2, remainingQuantity: 2, shelfLife: 3, expiryDate: "2026-06-26", batchType: "cut" },
-  { id: "batch-inv-017", skuId: "sku-001", storeId: "store-001", productionDate: "2026-06-23", quantity: 4, remainingQuantity: 4, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-018", skuId: "sku-003", storeId: "store-001", productionDate: "2026-06-23", quantity: 3, remainingQuantity: 3, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-019", skuId: "sku-004", storeId: "store-001", productionDate: "2026-06-22", quantity: 4, remainingQuantity: 4, shelfLife: 4, expiryDate: "2026-06-26", batchType: "cut" },
-  { id: "batch-inv-020", skuId: "sku-004", storeId: "store-001", productionDate: "2026-06-23", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-021", skuId: "sku-006", storeId: "store-001", productionDate: "2026-06-23", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-022", skuId: "sku-009", storeId: "store-001", productionDate: "2026-06-23", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
-  { id: "batch-inv-023", skuId: "sku-014", storeId: "store-001", productionDate: "2026-06-23", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
+  { id: "b-073", skuId: "sku-013", storeId: "store-001", productionDate: "2026-06-22", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
+  { id: "b-074", skuId: "sku-020", storeId: "store-001", productionDate: "2026-06-22", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-26", batchType: "cut" },
+  { id: "b-089", skuId: "sku-021", storeId: "store-001", productionDate: "2026-06-22", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-26", batchType: "cut" },
+  { id: "b-090", skuId: "sku-021", storeId: "store-001", productionDate: "2026-06-23", quantity: 2, remainingQuantity: 2, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
+  { id: "b-091", skuId: "sku-021", storeId: "store-001", productionDate: "2026-06-22", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-26", batchType: "whole" },
+  { id: "b-092", skuId: "sku-013", storeId: "store-001", productionDate: "2026-06-23", quantity: 1, remainingQuantity: 1, shelfLife: 4, expiryDate: "2026-06-27", batchType: "whole" },
+  { id: "b-094", skuId: "sku-016", storeId: "store-001", productionDate: "2026-06-23", quantity: 8, remainingQuantity: 8, shelfLife: 3, expiryDate: "2026-06-26", batchType: "cut" },
+  { id: "b-095", skuId: "sku-019", storeId: "store-001", productionDate: "2026-06-23", quantity: 2, remainingQuantity: 2, shelfLife: 3, expiryDate: "2026-06-26", batchType: "cut" },
 ];
