@@ -30,7 +30,7 @@ export default function DashboardPage() {
   [salesRecords, latestDataDate]);
 
   const skuCatMap = useMemo(() => new Map(skus.map(s => [s.id, s.category])), [skus]);
-  const totalStock = useMemo(() => getAllStoresTotalStock(inventoryBatches, skuCatMap), [inventoryBatches, skuCatMap]);
+  const totalStock = useMemo(() => getAllStoresTotalStock(inventoryBatches, salesRecords, skuCatMap), [inventoryBatches, salesRecords, skuCatMap]);
 
   const riskItems = useMemo(() => {
     const skuMap = new Map(skus.map(s => [s.id, s.name]));

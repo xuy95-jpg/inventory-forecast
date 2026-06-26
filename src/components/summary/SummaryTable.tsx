@@ -68,7 +68,7 @@ export default function SummaryTable() {
     return Object.entries(map).map(([skuId, d]) => {
       const sku = activeSkus.find(s => s.id === skuId);
       if (!sku) return null;
-      const stock = getSplitStock(inventoryBatches, storeId, skuId, sku.category);
+      const stock = getSplitStock(storeId, skuId, salesRecords, sku.category, end);
       return { sku, ...d, curCut: stock.cut, curWhole: stock.whole, curTotal: stock.total };
     }).filter(Boolean) as { sku: typeof activeSkus[0]; sales: number; cut: number; whole: number; wastage: number; soldOut: boolean; curCut: number; curWhole: number; curTotal: number }[];
   };
@@ -78,7 +78,7 @@ export default function SummaryTable() {
     return activeSkus.map(sku => {
       const record = salesRecords.find(r => r.date === targetDate && r.storeId === storeId && r.skuId === sku.id);
       const plan = productionPlans.find(p => p.date === targetDate && p.storeId === storeId && p.skuId === sku.id);
-      const stock = getSplitStock(inventoryBatches, storeId, sku.id, sku.category);
+      const stock = getSplitStock(storeId, sku.id, salesRecords, sku.category, targetDate);
       return {
         sku,
         salesQty: record?.salesQuantity || 0,
