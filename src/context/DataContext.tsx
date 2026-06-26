@@ -136,39 +136,62 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }))).then();
     }
 
-    // Update inventory: FEFO deduction (sell earliest-expiring first)
-    // Then set remaining stock to the entered 盘点 values
-    newRecs.forEach(r => {
-      const found = mockSkus.find(s => s.id === r.skuId);
-      const sl = found?.shelfLife || 4;
+    // FIFO 库存扣减：按销量消耗最老的批次
+    // 录入的盘点库存用作校验，不直接覆盖
+    newRecs.forEach((r) => {
+      const salesQuantity = r.salesQuantity;
+      if (salesQuantity <= 0) return;
 
-      // Delete old batches for this SKU+store, re-insert from entered stock
-      supabase.from('inventory_batches').delete().eq('store_id', r.storeId).eq('sku_id', r.skuId).then(() => {
-        const batches = [];
-        // expiry = 录入日期 + 保质期（录入当天是保质期第1天）
-        const expiry = new Date(r.date);
-        expiry.setDate(expiry.getDate() + sl);
-        const expStr = expiry.toISOString().split('T')[0];
+      // Read current batches for this SKU, sorted by expiry (FIFO)
+      supabase.from('inventory_batches')
+        .select('*')
+        .eq('store_id', r.storeId)
+        .eq('sku_id', r.skuId)
+        .order('expiry_date', { ascending: true })
+        .then(({ data: batches }) => {
+          if (!batches?.length) return;
 
-        if (r.wholeStock > 0) {
-          batches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-whole', sku_id: r.skuId, store_id: r.storeId, production_date: r.date, quantity: r.wholeStock, remaining_quantity: r.wholeStock, shelf_life: sl, expiry_date: expStr, batch_type: 'whole' });
-        }
-        if (r.cutStock > 0) {
-          batches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-cut', sku_id: r.skuId, store_id: r.storeId, production_date: r.date, quantity: r.cutStock, remaining_quantity: r.cutStock, shelf_life: sl, expiry_date: expStr, batch_type: 'cut' });
-        }
-        if (batches.length > 0) supabase.from('inventory_batches').upsert(batches).then();
-      });
+          let remaining = salesQuantity;
+          const updates: { id: string; remaining: number }[] = [];
 
-      // Local state update
-      setInventoryBatches(prev => {
-        const filtered = prev.filter(b => !(b.storeId === r.storeId && b.skuId === r.skuId));
-        const expiry = new Date(r.date); expiry.setDate(expiry.getDate() + sl);
-        const expStr = expiry.toISOString().split('T')[0];
-        const newBatches: InventoryBatch[] = [];
-        if (r.wholeStock > 0) newBatches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-whole', skuId: r.skuId, storeId: r.storeId, productionDate: r.date, quantity: r.wholeStock, remainingQuantity: r.wholeStock, shelfLife: sl, expiryDate: expStr, batchType: 'whole' });
-        if (r.cutStock > 0) newBatches.push({ id: 'batch-' + r.skuId + '-' + r.date + '-cut', skuId: r.skuId, storeId: r.storeId, productionDate: r.date, quantity: r.cutStock, remainingQuantity: r.cutStock, shelfLife: sl, expiryDate: expStr, batchType: 'cut' });
-        return [...filtered, ...newBatches];
-      });
+          for (const b of batches) {
+            if (remaining <= 0) break;
+            const deduct = Math.min(b.remaining_quantity, remaining);
+            updates.push({ id: b.id, remaining: Math.max(0, b.remaining_quantity - deduct) });
+            remaining -= deduct;
+          }
+
+          // Apply updates
+          updates.forEach(u => {
+            supabase.from('inventory_batches').update({ remaining_quantity: u.remaining }).eq('id', u.id).then();
+          });
+
+          // Also update local state
+          setInventoryBatches(prev => prev.map(b => {
+            const up = updates.find(u => u.id === b.id);
+            return up ? { ...b, remainingQuantity: up.remaining } : b;
+          }));
+
+          // ---- 校验 ----
+          // 计算扣减后的总库存，与录入的盘点库存对比
+          let computedCut = 0, computedWhole = 0;
+          batches.forEach(b => {
+            const up = updates.find(u => u.id === b.id);
+            const newRemaining = up ? up.remaining : b.remaining_quantity;
+            if (b.batch_type === 'cut') computedCut += newRemaining;
+            else computedWhole += newRemaining;
+          });
+          const enteredTotal = (r.cutStock || 0) + (r.wholeStock || 0) * 6;
+          const computedTotal = computedCut + computedWhole * 6;
+
+          if (Math.abs(enteredTotal - computedTotal) > 2 && enteredTotal > 0) {
+            console.warn(
+              '⚠️ 库存校验差异: ' + r.skuId + ' 录入=' + enteredTotal + '块(切' + r.cutStock + '整' + r.wholeStock + ') ' +
+              '计算=' + computedTotal + '块(切' + computedCut + '整' + computedWhole + ') ' +
+              '差=' + (enteredTotal - computedTotal) + '块'
+            );
+          }
+        });
     });
   }, []);
 
