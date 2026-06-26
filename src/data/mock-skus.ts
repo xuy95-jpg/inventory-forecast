@@ -20,7 +20,7 @@ export const mockSkus: Sku[] = [
   { id: "sku-017", name: "抹茶罐罐", category: "罐罐", shelfLife: 3, unit: "罐", active: true },
   { id: "sku-018", name: "葡萄罐罐", category: "罐罐", shelfLife: 3, unit: "罐", active: true },
   { id: "sku-019", name: "泰奶罐罐", category: "罐罐", shelfLife: 3, unit: "罐", active: true },
-  { id: "sku-020", name: "OMAKASE", category: "OMAKASE", shelfLife: 2, unit: "份", active: true },
+  { id: "sku-020", name: "OMAKASE", category: "OMAKASE", shelfLife: 4, unit: "份", active: true },
   { id: "sku-021", name: "黑巧", category: "6寸巴斯克", shelfLife: 4, unit: "个", active: true },
   { id: "sku-022", name: "泰奶", category: "6寸巴斯克", shelfLife: 4, unit: "个", active: true },
 ];
