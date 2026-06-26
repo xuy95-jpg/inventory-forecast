@@ -172,8 +172,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
             return up ? { ...b, remainingQuantity: up.remaining } : b;
           }));
 
+          // ---- 当天过期移除 ----
+          // 扣减完后，把当天到期的批次也清掉（过期不可售）
+          supabase.from('inventory_batches')
+            .select('id').eq('store_id', r.storeId).eq('sku_id', r.skuId)
+            .lte('expiry_date', r.date).then(({ data: expData }) => {
+              if (expData?.length) {
+                const ids = expData.map(e => e.id);
+                supabase.from('inventory_batches').delete().in('id', ids).then();
+                setInventoryBatches(prev => prev.filter(b => !ids.includes(b.id)));
+              }
+            });
+
           // ---- 校验 ----
-          // 计算扣减后的总库存，与录入的盘点库存对比
           let computedCut = 0, computedWhole = 0;
           batches.forEach(b => {
             const up = updates.find(u => u.id === b.id);
