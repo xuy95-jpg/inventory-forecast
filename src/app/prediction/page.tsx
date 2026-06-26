@@ -42,6 +42,8 @@ export default function PredictionPage() {
   }, [predictions, edits]);
 
   const handleConfirm = () => {
+    if (!confirm('确认生产计划？\n\n⚠️ 提醒：确认后请到「数据录入」页面手动录入当日盘点库存。\n\n生产计划目前不会自动生成库存批次，库存以盘点为基准。')) return;
+
     const now = new Date().toISOString();
     // Save prediction records for tracking
     const predRecs = predictions.filter(p => !p.isOmakase).map(p => ({
