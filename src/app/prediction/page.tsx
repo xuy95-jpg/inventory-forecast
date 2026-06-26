@@ -37,10 +37,6 @@ export default function PredictionPage() {
     return preds.filter(p => p.totalStock > 0 || p.twoDayTotal > 0);
   }, [targetDate, storeId, nonOmSkus, omSku, salesRecords, inventoryBatches, skus]);
 
-  const grandTotal = useMemo(() => {
-    return predictions.filter(p => !p.isOmakase).reduce((s, p) => s + (edits[p.skuId] ?? p.suggestedUnits), 0);
-  }, [predictions, edits]);
-
   const handleConfirm = () => {
     if (!confirm('确认生产计划？\n\n⚠️ 提醒：确认后请到「数据录入」页面手动录入当日盘点库存。\n\n生产计划目前不会自动生成库存批次，库存以盘点为基准。')) return;
 
@@ -54,10 +50,11 @@ export default function PredictionPage() {
     }));
     savePredictionRecords(predRecs);
 
-    // Save production plans
-    predictions.filter(p => !p.isOmakase).forEach(p => {
-      const actualUnits = edits[p.skuId] ?? p.suggestedUnits;
-      if (actualUnits > 0) saveProductionPlan({ date: targetDate, storeId, skuId: p.skuId, suggestedQuantity: p.suggestedUnits, actualQuantity: actualUnits, confirmedAt: now, notes: '' });
+    // Save production plans — include every SKU (even if AI suggested 0)
+    showSkus.forEach(({ sku }) => {
+      if (sku.category === 'OMAKASE') return;
+      const actualUnits = edits[sku.id] ?? 0;
+      saveProductionPlan({ date: targetDate, storeId, skuId: sku.id, suggestedQuantity: 0, actualQuantity: actualUnits, confirmedAt: now, notes: '' });
     });
     setConfirmed(true);
     setTimeout(() => setConfirmed(false), 3000);
@@ -67,11 +64,17 @@ export default function PredictionPage() {
 
   const showSkus = activeSkus.filter(s => s.category !== 'OMAKASE').map(s => {
     const pred = predictions.find(p => p.skuId === s.id);
-    if (!pred || (pred.totalStock === 0 && pred.twoDayTotal === 0 && !pred.isOmakase)) return null;
-    return { sku: s, pred };
-  }).filter(Boolean) as { sku: typeof skus[0]; pred: TwoDayPrediction & { skuName: string } }[];
+    return { sku: s, pred: pred || null };
+  }) as { sku: typeof skus[0]; pred: (TwoDayPrediction & { skuName: string }) | null }[];
 
   const omakasePred = predictions.find(p => p.isOmakase);
+
+  const grandTotal = useMemo(() => {
+    return showSkus.reduce((s, { sku, pred }) => {
+      if (sku.category === 'OMAKASE') return s;
+      return s + (edits[sku.id] ?? (pred?.suggestedUnits ?? 0));
+    }, 0);
+  }, [showSkus, edits]);
 
   return (
     <div className="space-y-6">
@@ -93,11 +96,11 @@ export default function PredictionPage() {
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white rounded-lg border p-3 flex items-center gap-3">
           <Package size={18} className="text-blue-500" />
-          <div><div className="text-xs text-gray-500">当前总库存</div><div className="text-lg font-bold">{showSkus.reduce((s,{pred})=>s+pred.totalStock,0)} 块</div></div>
+          <div><div className="text-xs text-gray-500">当前总库存</div><div className="text-lg font-bold">{showSkus.reduce((s,{pred})=>s+(pred?.totalStock||0),0)} 块</div></div>
         </div>
         <div className="bg-white rounded-lg border p-3 flex items-center gap-3">
           <TrendingUp size={18} className="text-purple-500" />
-          <div><div className="text-xs text-gray-500">两日预测总需求</div><div className="text-lg font-bold">{showSkus.reduce((s,{pred})=>s+pred.twoDayTotal,0)} 块</div></div>
+          <div><div className="text-xs text-gray-500">两日预测总需求</div><div className="text-lg font-bold">{showSkus.reduce((s,{pred})=>s+(pred?.twoDayTotal||0),0)} 块</div></div>
         </div>
         <div className="bg-white rounded-lg border p-3 flex items-center gap-3">
           <AlertTriangle size={18} className="text-amber-500" />
@@ -132,34 +135,33 @@ export default function PredictionPage() {
           </thead>
           <tbody>
             {showSkus.map(({ sku, pred }) => {
-              if (pred.isOmakase) return null;
-              const EditVal = edits[pred.skuId] !== undefined ? edits[pred.skuId] : pred.suggestedUnits;
-              const willProduce = pred.shortage > pred.threshold;
+              if (sku.category === 'OMAKASE') return null;
+              const aiUnits = pred ? pred.suggestedUnits : 0;
+              const EditVal = edits[sku.id] !== undefined ? edits[sku.id] : aiUnits;
               return (
                 <tr key={sku.id} className="border-b border-gray-50 hover:bg-gray-50/50">
                   <td className="px-3 py-2.5 font-medium text-gray-800">{sku.name}</td>
-                  <td className="px-2 py-2.5 text-center text-gray-600">{pred.cutStock}</td>
-                  <td className="px-2 py-2.5 text-center text-gray-600">{pred.wholeStock}</td>
-                  <td className="px-2 py-2.5 text-center font-medium text-gray-900">{pred.totalStock}</td>
-                  <td className="px-2 py-2.5 text-center text-gray-700">{pred.tomorrowSales}</td>
-                  <td className="px-2 py-2.5 text-center text-gray-700">{pred.dayAfterSales}</td>
-                  <td className="px-2 py-2.5 text-center font-medium">{pred.twoDayTotal}</td>
-                  <td className="px-2 py-2.5 text-center text-gray-500">{pred.dailyAvg.toFixed(1)}</td>
+                  <td className="px-2 py-2.5 text-center text-gray-600">{pred?.cutStock ?? '-'}</td>
+                  <td className="px-2 py-2.5 text-center text-gray-600">{pred?.wholeStock ?? '-'}</td>
+                  <td className="px-2 py-2.5 text-center font-medium text-gray-900">{pred?.totalStock ?? '-'}</td>
+                  <td className="px-2 py-2.5 text-center text-gray-700">{pred?.tomorrowSales ?? '-'}</td>
+                  <td className="px-2 py-2.5 text-center text-gray-700">{pred?.dayAfterSales ?? '-'}</td>
+                  <td className="px-2 py-2.5 text-center font-medium">{pred?.twoDayTotal ?? '-'}</td>
+                  <td className="px-2 py-2.5 text-center text-gray-500">{pred ? pred.dailyAvg.toFixed(1) : '-'}</td>
                   <td className="px-2 py-2.5 text-center">
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${pred.tier === '大款' ? 'bg-blue-100 text-blue-700' : pred.tier === '中款' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{pred.tier}</span>
+                    {pred ? <span className={`text-xs px-1.5 py-0.5 rounded-full ${pred.tier === '大款' ? 'bg-blue-100 text-blue-700' : pred.tier === '中款' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{pred.tier}</span> : '-'}
                   </td>
-                  <td className={`px-2 py-2.5 text-center ${willProduce ? 'text-red-600 font-bold' : 'text-gray-400'}`}>
-                    {pred.shortage}{willProduce ? '' : <span className='text-xs ml-1'>(≤{pred.threshold})</span>}
+                  <td className="px-2 py-2.5 text-center text-gray-400">
+                    {pred ? (pred.shortage > pred.threshold ? <span className="text-red-600 font-bold">{pred.shortage}</span> : <>{pred.shortage}<span className="text-xs ml-1">(≤{pred.threshold})</span></>) : '-'}
                   </td>
                   <td className="px-1 py-2.5 text-center">
-                    {willProduce ? (
-                      <input type="number" min={0} value={EditVal} onChange={e => setEdits({ ...edits, [pred.skuId]: Math.max(0, parseInt(e.target.value) || 0) })}
-                        className="w-14 px-1.5 py-1 border border-blue-300 rounded text-sm text-center font-bold text-gray-900 bg-blue-50" />
-                    ) : (
-                      <span className="text-xs text-gray-400">-</span>
-                    )}
+                    <input type="number" min={0} value={EditVal}
+                      onChange={e => setEdits({ ...edits, [sku.id]: Math.max(0, parseInt(e.target.value) || 0) })}
+                      className={`w-14 px-1.5 py-1 border rounded text-sm text-center font-bold ${EditVal > 0 ? 'border-blue-300 bg-blue-50 text-gray-900' : 'border-gray-200 text-gray-400'}`} />
                   </td>
-                  <td className="px-2 py-2.5 text-center"><span className={`inline-block px-1.5 py-0.5 rounded-full text-xs font-medium ${riskColor(pred.riskLevel)}`}>{pred.riskLevel === 'high' ? '高' : pred.riskLevel === 'medium' ? '中' : '低'}</span></td>
+                  <td className="px-2 py-2.5 text-center">
+                    {pred ? <span className={`inline-block px-1.5 py-0.5 rounded-full text-xs font-medium ${riskColor(pred.riskLevel)}`}>{pred.riskLevel === 'high' ? '高' : pred.riskLevel === 'medium' ? '中' : '低'}</span> : '-'}
+                  </td>
                 </tr>
               );
             })}
