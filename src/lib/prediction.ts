@@ -82,20 +82,16 @@ function getThreshold(dailyAvg: number): { tier: string; threshold: number } {
   return { tier: '小款', threshold: 4 };
 }
 
-function getSplitStock(storeId: string, skuId: string, salesData: SalesRecord[], skuCategory: string, forDate?: string): { cut: number; whole: number; total: number } {
-  // Find the most recent 盘点 record on or before the specified date
-  let best: SalesRecord | undefined;
-  for (const r of salesData) {
-    if (r.storeId !== storeId || r.skuId !== skuId) continue;
-    if (r.cutStock <= 0 && r.wholeStock <= 0) continue;
-    if (forDate && r.date > forDate) continue;
-    if (!best || r.date > best.date || (r.date === best.date && r.updatedAt > best.updatedAt)) best = r;
+function getSplitStock(storeId: string, skuId: string, batches: InventoryBatch[], skuCategory: string, forDate?: string): { cut: number; whole: number; total: number } {
+  let cut = 0, whole = 0;
+  for (const b of batches) {
+    if (b.storeId !== storeId || b.skuId !== skuId || b.remainingQuantity <= 0) continue;
+    // Only count batches produced on or before the reference date
+    if (forDate && b.productionDate && b.productionDate > forDate) continue;
+    if (b.batchType === 'cut') cut += b.remainingQuantity;
+    else whole += b.remainingQuantity;
   }
-
-  const cut = best?.cutStock || 0;
-  const whole = best?.wholeStock || 0;
-
-  if (skuCategory === '罐罐') return { cut: 0, whole: 0, total: cut };
+  if (skuCategory === '罐罐') return { cut: 0, whole, total: whole };
   return { cut, whole, total: cut + whole * 6 };
 }
 
@@ -143,7 +139,7 @@ export function predictTwoDay(
   const dayAfterSales = predictSingleDay(dayAfter, storeId, skuId, salesData);
   const totalDemand = tomorrowSales + dayAfterSales;
 
-  const stock = getSplitStock(storeId, skuId, salesData, cat, productionDate);
+  const stock = getSplitStock(storeId, skuId, inventoryBatches, cat, productionDate);
   const shortage = Math.max(0, totalDemand - stock.total);
 
   const dailyAvg = getDailyAvg(storeId, skuId, salesData);
