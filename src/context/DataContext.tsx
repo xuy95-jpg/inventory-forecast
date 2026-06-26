@@ -207,7 +207,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addInventoryBatch = useCallback((b: Omit<InventoryBatch, 'id'>) => {
-    setInventoryBatches(prev => [...prev, { ...b, id: generateId() }]);
+    const newBatch: InventoryBatch = { ...b, id: generateId() };
+    setInventoryBatches(prev => [...prev, newBatch]);
+    // Sync to Supabase
+    supabase.from('inventory_batches').upsert({
+      id: newBatch.id, sku_id: b.skuId, store_id: b.storeId,
+      production_date: b.productionDate, quantity: b.quantity,
+      remaining_quantity: b.remainingQuantity, shelf_life: b.shelfLife,
+      expiry_date: b.expiryDate, batch_type: b.batchType,
+    }).then(({ error }) => { if (error) console.warn(error.message); });
   }, []);
 
   const updateInventoryBatch = useCallback((id: string, u: Partial<InventoryBatch>) => {

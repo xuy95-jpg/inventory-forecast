@@ -3,10 +3,18 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useData } from '@/context/DataContext';
 import { todayStr } from '@/lib/helpers';
-import { Save, Settings, Plus, X, Trash2, Download, ChevronDown } from 'lucide-react';
+import { Save, Settings, Plus, X, Trash2, Download, ChevronDown, Package } from 'lucide-react';
+
+interface BatchRow {
+  key: string;         // unique key for React
+  skuId: string;
+  cut: string;
+  whole: string;
+  prodDate: string;
+}
 
 export default function DataEntryPage() {
-  const { stores, skus, salesRecords, addSalesRecords, toggleSkuActive, addSku } = useData();
+  const { stores, skus, salesRecords, addSalesRecords, inventoryBatches, addInventoryBatch, toggleSkuActive, addSku } = useData();
   const storeId = stores[0]?.id || 'store-001';
   const activeSkus = useMemo(() => skus.filter(s => s.active), [skus]);
   const inactiveSkus = useMemo(() => skus.filter(s => !s.active), [skus]);
@@ -22,56 +30,152 @@ export default function DataEntryPage() {
   const [exportStart, setExportStart] = useState(todayStr());
   const [exportEnd, setExportEnd] = useState(todayStr());
 
-  const [rows, setRows] = useState<Record<string, { sales: string; cut: string; whole: string; wastage: string; soldOut: boolean }>>({});
+  // === Sales rows (one per SKU) ===
+  const [salesRows, setSalesRows] = useState<Record<string, { sales: string; wastage: string; soldOut: boolean }>>({});
 
+  // === Inventory batch rows (multiple per SKU) ===
+  const [batchRows, setBatchRows] = useState<BatchRow[]>([]);
+
+  // Initialize sales rows for all active SKUs
   useEffect(() => {
-    setRows(prev => {
+    setSalesRows(prev => {
       const next = { ...prev };
       activeSkus.forEach(s => {
-        if (!next[s.id]) next[s.id] = { sales: '', cut: '', whole: '', wastage: '', soldOut: false };
+        if (!next[s.id]) next[s.id] = { sales: '', wastage: '', soldOut: false };
       });
       return next;
     });
   }, [activeSkus]);
 
+  // Pre-fill from existing data for the selected date
   useEffect(() => {
     const existing = salesRecords.filter(r => r.date === date && r.storeId === storeId);
-    setRows(prev => {
+
+    // Fill sales rows
+    setSalesRows(prev => {
       const next = { ...prev };
-      Object.keys(next).forEach(k => { next[k] = { sales: '', cut: '', whole: '', wastage: '', soldOut: false }; });
+      Object.keys(next).forEach(k => { next[k] = { sales: '', wastage: '', soldOut: false }; });
       existing.forEach(r => {
-        next[r.skuId] = {
-          sales: r.salesQuantity > 0 ? String(r.salesQuantity) : '',
-          cut: r.cutStock > 0 ? String(r.cutStock) : '',
-          whole: r.wholeStock > 0 ? String(r.wholeStock) : '',
-          wastage: r.wastage > 0 ? String(r.wastage) : '',
-          soldOut: r.soldOut,
-        };
+        if (next[r.skuId]) {
+          next[r.skuId] = {
+            sales: r.salesQuantity > 0 ? String(r.salesQuantity) : '',
+            wastage: r.wastage > 0 ? String(r.wastage) : '',
+            soldOut: r.soldOut,
+          };
+        }
       });
       return next;
     });
-  }, [date, salesRecords, storeId]);
 
-  const updateRow = (skuId: string, field: string, value: string | boolean) => {
-    setRows(prev => ({ ...prev, [skuId]: { ...prev[skuId], [field]: value } }));
+    // Fill batch rows from existing inventory_batches for this date
+    const dayBatches = inventoryBatches.filter(b => b.productionDate === date && b.storeId === storeId);
+    if (dayBatches.length > 0) {
+      setBatchRows(dayBatches.map((b, i) => ({
+        key: 'existing-' + b.id,
+        skuId: b.skuId,
+        cut: b.batchType === 'cut' ? String(b.remainingQuantity) : '',
+        whole: b.batchType === 'whole' ? String(b.remainingQuantity) : '',
+        prodDate: b.productionDate,
+      })));
+    } else {
+      setBatchRows([]);
+    }
+  }, [date, salesRecords, inventoryBatches, storeId]);
+
+  const updateSales = (skuId: string, field: string, value: string | boolean) => {
+    setSalesRows(prev => ({ ...prev, [skuId]: { ...prev[skuId], [field]: value } }));
+  };
+
+  const updateBatch = (key: string, field: string, value: string) => {
+    setBatchRows(prev => prev.map(b => b.key === key ? { ...b, [field]: value } : b));
+  };
+
+  const addBatchRow = () => {
+    const k = 'new-' + Date.now() + '-' + batchRows.length;
+    setBatchRows(prev => [...prev, { key: k, skuId: activeSkus[0]?.id || '', cut: '', whole: '', prodDate: date }]);
+  };
+
+  const removeBatch = (key: string) => {
+    setBatchRows(prev => prev.filter(b => b.key !== key));
   };
 
   const handleSave = () => {
-    const records = Object.entries(rows)
-      .filter(([, v]) => v.sales !== '' || v.cut !== '' || v.whole !== '' || v.wastage !== '')
-      .map(([skuId, v]) => ({ date, storeId, skuId, salesQuantity: parseInt(v.sales) || 0, cutStock: parseInt(v.cut) || 0, wholeStock: parseInt(v.whole) || 0, wastage: parseInt(v.wastage) || 0, soldOut: !!v.soldOut }));
-    if (records.length === 0) return;
-    addSalesRecords(records);
-    setSaved(records.length);
+    // 1. Save sales records
+    const salesRecords2 = Object.entries(salesRows)
+      .filter(([, v]) => v.sales !== '' || v.wastage !== '')
+      .map(([skuId, v]) => ({
+        date, storeId, skuId,
+        salesQuantity: parseInt(v.sales) || 0,
+        cutStock: 0, wholeStock: 0,  // will compute from batches below
+        wastage: parseInt(v.wastage) || 0,
+        soldOut: !!v.soldOut,
+      }));
+
+    // 2. Save inventory batches
+    const batches = batchRows
+      .filter(b => b.cut !== '' || b.whole !== '')
+      .map(b => {
+        const sku = skus.find(s => s.id === b.skuId);
+        const sl = sku?.shelfLife || 4;
+        const expiry = new Date(b.prodDate); expiry.setDate(expiry.getDate() + sl);
+        return {
+          id: 'batch-' + b.skuId + '-' + b.prodDate + '-' + (b.cut !== '' ? 'cut' : 'whole') + '-' + b.key,
+          skuId: b.skuId, storeId, productionDate: b.prodDate,
+          cutStock: parseInt(b.cut) || 0,
+          wholeStock: parseInt(b.whole) || 0,
+          shelfLife: sl, expiryDate: expiry.toISOString().split('T')[0],
+        };
+      });
+
+    // Compute aggregate stock per SKU for sales record
+    const stockBySku: Record<string, { cut: number; whole: number }> = {};
+    batches.forEach(b => {
+      if (!stockBySku[b.skuId]) stockBySku[b.skuId] = { cut: 0, whole: 0 };
+      stockBySku[b.skuId].cut += b.cutStock;
+      stockBySku[b.skuId].whole += b.wholeStock;
+    });
+
+    // Final sales records with aggregated stock
+    const finalSalesRecords = salesRecords2.map(r => ({
+      ...r,
+      cutStock: stockBySku[r.skuId]?.cut || 0,
+      wholeStock: stockBySku[r.skuId]?.whole || 0,
+    }));
+
+    if (finalSalesRecords.length === 0 && batches.length === 0) return;
+
+    const totalItems = finalSalesRecords.length + batches.length;
+
+    // Save
+    if (finalSalesRecords.length > 0) addSalesRecords(finalSalesRecords);
+    batches.forEach(b => {
+      addInventoryBatch({
+        skuId: b.skuId, storeId,
+        productionDate: b.productionDate,
+        quantity: (b.cutStock || 0) + (b.wholeStock || 0),
+        remainingQuantity: (b.cutStock || 0) + (b.wholeStock || 0),
+        shelfLife: b.shelfLife, expiryDate: b.expiryDate,
+        batchType: b.wholeStock > 0 ? 'whole' : 'cut',
+      });
+    });
+
+    setSaved(totalItems);
     setTimeout(() => setSaved(0), 2000);
   };
 
   const handleDelete = () => {
-    const recordsToDelete = Object.entries(rows).filter(([, v]) => v.sales !== '' || v.cut !== '' || v.whole !== '' || v.wastage !== '');
-    if (recordsToDelete.length === 0) return;
-    if (!confirm(`确认删除 ${date} 的 ${recordsToDelete.length} 条已录入数据？此操作不可恢复。`)) return;
-    addSalesRecords(recordsToDelete.map(([skuId]) => ({ date, storeId, skuId, salesQuantity: 0, cutStock: 0, wholeStock: 0, wastage: 0, soldOut: false })));
-    setRows(prev => { const next = { ...prev }; recordsToDelete.forEach(([skuId]) => { next[skuId] = { sales: '', cut: '', whole: '', wastage: '', soldOut: false }; }); return next; });
+    const hasSales = Object.values(salesRows).some(v => v.sales !== '' || v.wastage !== '');
+    if (!hasSales && batchRows.length === 0) return;
+    if (!confirm(`确认删除 ${date} 的全部数据？`)) return;
+
+    if (hasSales) {
+      addSalesRecords(
+        Object.keys(salesRows).filter(k => salesRows[k].sales !== '' || salesRows[k].wastage !== '')
+          .map(skuId => ({ date, storeId, skuId, salesQuantity: 0, cutStock: 0, wholeStock: 0, wastage: 0, soldOut: false }))
+      );
+    }
+    setSalesRows(prev => { const n = { ...prev }; Object.keys(n).forEach(k => { n[k] = { sales: '', wastage: '', soldOut: false }; }); return n; });
+    setBatchRows([]);
     setSaved(-1);
     setTimeout(() => setSaved(0), 2000);
   };
@@ -79,35 +183,24 @@ export default function DataEntryPage() {
   const handleExport = () => {
     const records = salesRecords.filter(r => r.date >= exportStart && r.date <= exportEnd && r.storeId === storeId);
     if (records.length === 0) { alert('所选日期范围无数据'); return; }
-
-    // Aggregate by SKU
     const map: Record<string, { name: string; sales: number; cut: number; whole: number; wastage: number; soldOut: boolean }> = {};
     records.forEach(r => {
       if (!map[r.skuId]) { const sku = skus.find(s => s.id === r.skuId); map[r.skuId] = { name: sku?.name || r.skuId, sales: 0, cut: 0, whole: 0, wastage: 0, soldOut: false }; }
-      map[r.skuId].sales += r.salesQuantity;
-      map[r.skuId].cut = r.cutStock;
-      map[r.skuId].whole = r.wholeStock;
-      map[r.skuId].wastage += r.wastage;
-      if (r.soldOut) map[r.skuId].soldOut = true;
+      map[r.skuId].sales += r.salesQuantity; map[r.skuId].cut = r.cutStock; map[r.skuId].whole = r.wholeStock;
+      map[r.skuId].wastage += r.wastage; if (r.soldOut) map[r.skuId].soldOut = true;
     });
-
     const data = Object.values(map).filter(d => d.sales > 0 || d.cut > 0 || d.whole > 0);
-    if (data.length === 0) { alert('所选日期范围无有效数据'); return; }
-
-    const totalSales = data.reduce((s, d) => s + d.sales, 0);
-    let csv = 'SKU,累计销量(块),最新盘存切角,最新盘存整模,累计报损,售罄\n';
-    data.forEach(d => { csv += d.name + ',' + d.sales + ',' + d.cut + ',' + d.whole + ',' + d.wastage + ',' + (d.soldOut ? '是' : '否') + '\n'; });
-    csv += '合计,' + totalSales + '\n导出范围,' + exportStart + '~' + exportEnd;
-
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'nana-data-' + exportStart + '_to_' + exportEnd + '.csv'; a.click();
-    URL.revokeObjectURL(url);
-    setShowExport(false);
+    let csv = 'SKU,累计销量(块),盘点切角,盘点整模,累计报损,售罄\n';
+    data.forEach(d => { csv += d.name + ',' + d.sales + ',' + d.cut + ',' + d.whole + ',' + d.wastage + ',' + (d.soldOut?'是':'否') + '\n'; });
+    csv += '合计,' + data.reduce((s,d)=>s+d.sales,0) + '\n时间范围,' + exportStart + '~' + exportEnd;
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'nana-' + exportStart + '.csv'; a.click();
+    URL.revokeObjectURL(url); setShowExport(false);
   };
 
-  const filledCount = Object.values(rows).filter(v => v.sales !== '' || v.cut !== '' || v.whole !== '' || v.wastage !== '').length;
+  const filledSales = Object.values(salesRows).filter(v => v.sales !== '' || v.wastage !== '').length;
+  const filledBatches = batchRows.filter(b => b.cut !== '' || b.whole !== '').length;
+  const totalFilled = filledSales + filledBatches;
 
   return (
     <div className="space-y-6">
@@ -115,13 +208,14 @@ export default function DataEntryPage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">数据录入</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {filledCount > 0 ? `📝 ${date} 已录入 ${filledCount} 个品 · 可直接修改` : '填入数值即可'}
+            {totalFilled > 0
+              ? `📝 ${date} 销量${filledSales}品 + 库存${filledBatches}批`
+              : '填入销量和库存批次'}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <button onClick={() => setShowSkuManager(!showSkuManager)} className="px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1"><Settings size={14} /> 品项管理</button>
 
-          {/* Export */}
           <div className="relative">
             <button onClick={() => setShowExport(!showExport)} className="px-3 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1"><Download size={14} /> 导出 <ChevronDown size={10} /></button>
             {showExport && (
@@ -139,17 +233,17 @@ export default function DataEntryPage() {
           </div>
 
           <input type="date" value={date} onChange={e => setDate(e.target.value)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm" />
-          {filledCount > 0 && (
-            <button onClick={handleDelete} className="px-3 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 flex items-center gap-1"><Trash2 size={14} /> 删除当日</button>
+          {totalFilled > 0 && (
+            <button onClick={handleDelete} className="px-3 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 flex items-center gap-1"><Trash2 size={14} /> 删除</button>
           )}
-          <button onClick={handleSave} disabled={filledCount === 0}
+          <button onClick={handleSave} disabled={totalFilled === 0}
             className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
-            <Save size={14} /> 保存 ({filledCount}品)
+            <Save size={14} /> 保存
           </button>
         </div>
       </div>
 
-      {saved > 0 && <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-700">✅ 已保存 {saved} 条记录到数据库</div>}
+      {saved > 0 && <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 text-sm text-green-700">✅ 已保存（{filledSales}品销量 + {filledBatches}批库存）</div>}
       {saved < 0 && <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">🗑️ 已删除当日数据</div>}
 
       {showSkuManager && (
@@ -185,35 +279,96 @@ export default function DataEntryPage() {
         </div>
       )}
 
+      {/* === Section 1: 每日销量 === */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center gap-2">
+          <span className="text-xs font-semibold text-gray-700">📊 每日销量</span>
+        </div>
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-100 bg-gray-50">
+            <tr className="border-b border-gray-100">
               <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500">SKU</th>
               <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-24">销量(块)</th>
-              <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-24">切角库存(块)</th>
-              <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-24">整模库存(个)</th>
               <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-20">报损(块)</th>
               <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-14">售罄</th>
             </tr>
           </thead>
           <tbody>
             {activeSkus.map(sku => {
-              const v = rows[sku.id] || { sales: '', cut: '', whole: '', wastage: '', soldOut: false };
-              const hasValue = v.sales !== '' || v.cut !== '' || v.whole !== '' || v.wastage !== '';
+              const v = salesRows[sku.id] || { sales: '', wastage: '', soldOut: false };
+              const filled = v.sales !== '' || v.wastage !== '';
               return (
-                <tr key={sku.id} className={`border-b border-gray-50 ${hasValue ? 'bg-blue-50/30' : 'hover:bg-gray-50/50'}`}>
+                <tr key={sku.id} className={`border-b border-gray-50 ${filled ? 'bg-blue-50/30' : 'hover:bg-gray-50/50'}`}>
                   <td className="px-3 py-2 text-gray-700 font-medium">{sku.name}</td>
-                  <td className="px-1 py-1 text-center"><input type="number" min="0" value={v.sales} onChange={e => updateRow(sku.id, 'sales', e.target.value)} className="w-16 px-1.5 py-1.5 border border-gray-200 rounded text-sm text-center focus:ring-2 focus:ring-blue-500" /></td>
-                  <td className="px-1 py-1 text-center"><input type="number" min="0" value={v.cut} onChange={e => updateRow(sku.id, 'cut', e.target.value)} className="w-16 px-1.5 py-1.5 border border-gray-200 rounded text-sm text-center focus:ring-2 focus:ring-blue-500" /></td>
-                  <td className="px-1 py-1 text-center"><input type="number" min="0" value={v.whole} onChange={e => updateRow(sku.id, 'whole', e.target.value)} className="w-16 px-1.5 py-1.5 border border-gray-200 rounded text-sm text-center focus:ring-2 focus:ring-blue-500" /></td>
-                  <td className="px-1 py-1 text-center"><input type="number" min="0" value={v.wastage} onChange={e => updateRow(sku.id, 'wastage', e.target.value)} className="w-16 px-1.5 py-1.5 border border-red-200 rounded text-sm text-center text-red-500 focus:ring-2 focus:ring-red-500" /></td>
-                  <td className="px-1 py-1 text-center"><input type="checkbox" checked={v.soldOut} onChange={e => updateRow(sku.id, 'soldOut', e.target.checked)} /></td>
+                  <td className="px-1 py-1 text-center">
+                    <input type="number" min="0" value={v.sales} onChange={e => updateSales(sku.id, 'sales', e.target.value)}
+                      className="w-16 px-1.5 py-1.5 border border-gray-200 rounded text-sm text-center focus:ring-2 focus:ring-blue-500" />
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <input type="number" min="0" value={v.wastage} onChange={e => updateSales(sku.id, 'wastage', e.target.value)}
+                      className="w-14 px-1.5 py-1.5 border border-red-200 rounded text-sm text-center text-red-500 focus:ring-2 focus:ring-red-500" />
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <input type="checkbox" checked={v.soldOut} onChange={e => updateSales(sku.id, 'soldOut', e.target.checked)} />
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* === Section 2: 库存批次 === */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+          <span className="text-xs font-semibold text-gray-700 flex items-center gap-2"><Package size={12} /> 库存批次 · 生产日期</span>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100">
+              <th className="px-3 py-2.5 text-left text-xs font-medium text-gray-500 w-32">SKU</th>
+              <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-24">切角(块)</th>
+              <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-24">整模(个)</th>
+              <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-32">生产日期</th>
+              <th className="px-2 py-2.5 text-center text-xs font-medium text-gray-500 w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {batchRows.map(b => {
+              const sku = skus.find(s => s.id === b.skuId);
+              return (
+                <tr key={b.key} className="border-b border-gray-50 hover:bg-gray-50/50">
+                  <td className="px-1 py-1">
+                    <select value={b.skuId} onChange={e => updateBatch(b.key, 'skuId', e.target.value)}
+                      className="w-full px-1 py-1.5 border border-gray-200 rounded text-xs">
+                      {activeSkus.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <input type="number" min="0" value={b.cut} onChange={e => updateBatch(b.key, 'cut', e.target.value)}
+                      className="w-16 px-1.5 py-1.5 border border-gray-200 rounded text-sm text-center" />
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <input type="number" min="0" value={b.whole} onChange={e => updateBatch(b.key, 'whole', e.target.value)}
+                      className="w-16 px-1.5 py-1.5 border border-gray-200 rounded text-sm text-center" />
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <input type="date" value={b.prodDate} onChange={e => updateBatch(b.key, 'prodDate', e.target.value)}
+                      className="px-1 py-1.5 border border-gray-200 rounded text-xs" />
+                  </td>
+                  <td className="px-1 py-1 text-center">
+                    <button onClick={() => removeBatch(b.key)} className="p-1 text-gray-400 hover:text-red-500"><X size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="px-3 py-2 border-t border-gray-100">
+          <button onClick={addBatchRow} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700">
+            <Plus size={12} /> 新增批次
+          </button>
+        </div>
       </div>
     </div>
   );
