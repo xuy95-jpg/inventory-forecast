@@ -136,15 +136,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }))).then();
     }
 
-    // Update inventory batches: overwrite existing for this SKU+store with entered stock
+    // Update inventory: FEFO deduction (sell earliest-expiring first)
+    // Then set remaining stock to the entered 盘点 values
     newRecs.forEach(r => {
       const found = mockSkus.find(s => s.id === r.skuId);
-      const sl = found?.shelfLife || 5;
+      const sl = found?.shelfLife || 4;
 
-      // Delete old batches for this SKU+store, then insert new
+      // Delete old batches for this SKU+store, re-insert from entered stock
       supabase.from('inventory_batches').delete().eq('store_id', r.storeId).eq('sku_id', r.skuId).then(() => {
         const batches = [];
-        const expiry = new Date(r.date); expiry.setDate(expiry.getDate() + sl);
+        // expiry = 录入日期 + 保质期（录入当天是保质期第1天）
+        const expiry = new Date(r.date);
+        expiry.setDate(expiry.getDate() + sl);
         const expStr = expiry.toISOString().split('T')[0];
 
         if (r.wholeStock > 0) {
@@ -155,13 +158,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
         if (batches.length > 0) supabase.from('inventory_batches').upsert(batches).then();
       });
-    });
 
-    // Also update local state
-    newRecs.forEach(r => {
+      // Local state update
       setInventoryBatches(prev => {
         const filtered = prev.filter(b => !(b.storeId === r.storeId && b.skuId === r.skuId));
-        const sl = 5;
         const expiry = new Date(r.date); expiry.setDate(expiry.getDate() + sl);
         const expStr = expiry.toISOString().split('T')[0];
         const newBatches: InventoryBatch[] = [];
